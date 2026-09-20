@@ -34,10 +34,11 @@
 <body>
 <header class="cab">
   <img src="icon-192.png" alt="LQDD" width="76" height="76">
-  <div><h1>ESCANEA</h1><p>¿Te gustaría saber de qué país es?</p></div>
+  <div><h1>SCANNER</h1><p>¿Te gustaría saber de qué país es?</p></div>
 </header>
 <div id="lector"></div>
 <button id="btn">Activar cámara</button>
+<button id="vozBtn" type="button" style="background:#6b4e00;color:#fff">🔊 Voz: ACTIVADA</button>
 <div class="fila">
   <input id="manual" inputmode="numeric" placeholder="O escribe el código">
   <button id="ok">Ver</button>
@@ -130,7 +131,17 @@ function paisDe(codigo){
   return f ? f[2] : "Desconocido / código especial";
 }
 
+let vozActiva = localStorage.getItem("vozActiva") !== "0";
+
+function actualizarBotonVoz(){
+  const b = document.getElementById("vozBtn");
+  if(!b) return;
+  b.textContent = vozActiva ? "🔊 Voz: ACTIVADA" : "🔇 Voz: DESACTIVADA";
+  b.style.background = vozActiva ? "#6b4e00" : "#555";
+}
+
 function hablar(texto){
+  if(!vozActiva) return;
   try{
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(texto);
@@ -138,6 +149,57 @@ function hablar(texto){
     speechSynthesis.speak(u);
   }catch(e){}
 }
+function fanfarriaEspana(){
+  try{
+    const C = window.AudioContext || window.webkitAudioContext;
+    if(!C) return;
+    const ctx = new C();
+    const ahora = ctx.currentTime;
+    // Pequeña fanfarria ascendente, generada en el propio navegador.
+    const notas = [
+      [392,0.00,0.18],[523.25,0.18,0.18],[659.25,0.36,0.22],
+      [523.25,0.62,0.16],[659.25,0.78,0.16],[783.99,0.94,0.42]
+    ];
+    notas.forEach(([freq, inicio, dur]) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(freq, ahora + inicio);
+      gain.gain.setValueAtTime(0.0001, ahora + inicio);
+      gain.gain.exponentialRampToValueAtTime(0.16, ahora + inicio + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ahora + inicio + dur);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ahora + inicio);
+      osc.stop(ahora + inicio + dur + 0.02);
+    });
+    setTimeout(() => { try{ctx.close();}catch(e){} }, 1800);
+  }catch(e){}
+}
+
+function pitidoEmergencia(){
+  try{
+    const C = window.AudioContext || window.webkitAudioContext;
+    if(!C) return;
+    const ctx = new C();
+    const ahora = ctx.currentTime;
+    [0, 0.28, 0.56].forEach((d, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "square";
+      osc.frequency.value = i % 2 === 0 ? 880 : 660;
+      gain.gain.setValueAtTime(0.0001, ahora + d);
+      gain.gain.exponentialRampToValueAtTime(0.18, ahora + d + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ahora + d + 0.18);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ahora + d);
+      osc.stop(ahora + d + 0.2);
+    });
+    setTimeout(() => { try{ctx.close();}catch(e){} }, 1200);
+  }catch(e){}
+}
+
 // Chrome solo deja hablar tras un toque del usuario: lo "desbloqueamos" con el primero
 window.addEventListener("pointerdown", () => {
   try{ const u = new SpeechSynthesisUtterance(""); u.volume = 0; speechSynthesis.speak(u); }catch(e){}
@@ -340,7 +402,7 @@ function pintar(){
   let frase = "";
   cuadro.className = "";
   if(!desconocido){
-    frase = pais === "España" ? "¡Viva España!" : (pais === "Marruecos" ? "¡NO, NO, NO, NO! ¡MARRUECOS NO!" : "¡No!");
+    frase = pais === "España" ? "¡Viva España!" : (pais === "Marruecos" ? "¡No, no, no, Marruecos no!" : "¡No!");
     cuadro.className = pais === "España" ? "ok" : "mal";
   }
   $("frase").textContent = frase;
@@ -355,6 +417,8 @@ function pintar(){
   if(info.ori) html += "<br>🌾 Ingredientes de: " + esc(info.ori);
   $("fabrica").innerHTML = html;
 
+  if(pais === "España") fanfarriaEspana();
+  if(pais === "Marruecos") pitidoEmergencia();
   hablar((frase ? frase + " " : "") + detalle);
   guardar(codigo, desconocido ? "Desconocido" : pais, confirmado ? "producido en " + nombre : "según el código");
 }
@@ -394,6 +458,19 @@ async function iniciar(){
     alert("No se pudo abrir la cámara. Revisa los permisos (hace falta https).");
   }
 }
+const vozBtn = document.getElementById("vozBtn");
+if(vozBtn){
+  actualizarBotonVoz();
+  vozBtn.onclick = () => {
+    vozActiva = !vozActiva;
+    localStorage.setItem("vozActiva", vozActiva ? "1" : "0");
+    if(!vozActiva){
+      try{ speechSynthesis.cancel(); }catch(e){}
+    }
+    actualizarBotonVoz();
+  };
+}
+
 btn.onclick = () => activo ? parar() : iniciar();
 window.addEventListener("load", iniciar);
 document.getElementById("ok").onclick = () => mostrar(document.getElementById("manual").value);
