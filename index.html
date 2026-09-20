@@ -656,21 +656,20 @@ function pintar(){
   cuadro.className="";
   $("pais").textContent=nombre;
   $("frase").textContent="";
-  let html="<div style=\"font-size:22px;font-weight:800;margin-bottom:10px\">"+esc(nombre)+"</div>";
-  if(info.marca) html+="<div style=\"margin-bottom:10px\"><b>Marca:</b> "+esc(info.marca)+"</div>";
-
-  // Resultado principal: solo afirmamos "Producto español" cuando tenemos evidencia suficiente.
+  // El resultado se calcula una sola vez para evitar mensajes contradictorios.
   let veredicto="⚪ ORIGEN NO CONFIRMADO", clase="";
   if(fabricadoConfirmado && fabricadoES && origenES){
     veredicto="🇪🇸 PRODUCTO ESPAÑOL"; clase="ok";
-  }else if(fabricadoConfirmado && !fabricadoES){
-    veredicto="🌍 NO FABRICADO EN ESPAÑA"; clase="mal";
-  }else if(origenES && !paisFab){
-    veredicto="🇪🇸 ORIGEN ESPAÑA · FABRICACIÓN NO CONFIRMADA"; clase="ok";
   }else if(fabricadoConfirmado && fabricadoES){
-    veredicto="🇪🇸 FABRICADO EN ESPAÑA · ORIGEN NO CONFIRMADO"; clase="ok";
+    veredicto="🇪🇸 FABRICADO EN ESPAÑA"; clase="ok";
+  }else if(fabricadoConfirmado && !fabricadoES){
+    veredicto="🌍 FABRICADO FUERA DE ESPAÑA"; clase="mal";
+  }else if(origenES){
+    veredicto="🇪🇸 ORIGEN ESPAÑA · FABRICACIÓN NO CONFIRMADA"; clase="ok";
   }
   cuadro.className=clase;
+  let html="<div style=\"font-size:22px;font-weight:800;margin-bottom:10px\">"+esc(nombre)+"</div>";
+  if(info.marca) html+="<div style=\"margin-bottom:10px\"><b>Marca:</b> "+esc(info.marca)+"</div>";
   html+="<div style=\"font-size:19px;font-weight:900;margin:8px 0 14px\">"+veredicto+"</div>";
 
   if(paisOrigen) html+="🌍 <b>Origen:</b> "+esc(paisOrigen)+"<br>";
@@ -690,7 +689,7 @@ function pintar(){
   // Solo mostramos el prefijo como dato auxiliar; nunca se usa como prueba de origen.
   if(paisPrefijo) html+="<br><small>🏷️ Prefijo GS1: "+esc(paisPrefijo)+" · No demuestra el país de fabricación.</small>";
 
-  $("fabricadoEn").textContent=paisFab?(fabricadoConfirmado?"🏭 Fabricado en "+paisFab:"🏭 Evidencia asociada: "+paisFab):"⚪ Fabricación no confirmada";
+  $("fabricadoEn").textContent="";
   $("fabrica").innerHTML=html;
   if(paisPrefijo==="España" && (fabricadoES||origenES)) fanfarriaEspana();
   if(paisFab && !fabricadoES) pitidoEmergencia();
@@ -702,19 +701,45 @@ function pintar(){
 if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js?v=20260920-origen-v3").catch(()=>{}); }
 const btn = document.getElementById("btn");
 const estadoEscaneo = document.getElementById("estadoEscaneo");
-let scanner, activo=false, ultimo="";
+let scanner, activo=false;
+let lecturaPendiente="", lecturasSeguidas=0, tiempoLectura=0;
+
+function normalizarLectura(txt){
+  return String(txt||"").trim();
+}
+
+function esCodigoBarrasNumerico(txt){
+  const s=normalizarLectura(txt);
+  return /^(?:\d{8}|\d{12}|\d{13}|\d{14})$/.test(s);
+}
+
+function digitoControlValido(codigo){
+  const s=normalizarLectura(codigo);
+  if(!esCodigoBarrasNumerico(s)) return true; // QR/DataMatrix u otro contenido
+  const n=s.length;
+  let suma=0;
+  for(let i=n-2, pos=0;i>=0;i--,pos++){
+    const d=Number(s[i]);
+    suma += d * (pos%2===0 ? 3 : 1);
+  }
+  return ((10-(suma%10))%10)===Number(s[n-1]);
+}
 
 async function parar(){
   if(!activo)return; activo=false;
   try{await scanner.stop();scanner.clear();}catch(e){}
+  lecturaPendiente=""; lecturasSeguidas=0; tiempoLectura=0;
   btn.textContent="📷 Escanear otro";
   if(estadoEscaneo)estadoEscaneo.textContent="📷 Escanea el código para identificarlo";
 }
 
 async function iniciar(){
-  if(activo)return; activo=true;
+  if(activo)return;
+  activo=true;
+  lecturaPendiente=""; lecturasSeguidas=0; tiempoLectura=0;
   btn.textContent="Parar cámara";
-  if(estadoEscaneo)estadoEscaneo.textContent="📷 Buscando código...";
+  if(estadoEscaneo)estadoEscaneo.textContent="📷 Apunta al código de barras y mantenlo dentro del recuadro...";
+
   scanner=new Html5Qrcode("lector",{formatsToSupport:[
     Html5QrcodeSupportedFormats.EAN_13,
     Html5QrcodeSupportedFormats.EAN_8,
@@ -722,18 +747,45 @@ async function iniciar(){
     Html5QrcodeSupportedFormats.UPC_E,
     ...(Html5QrcodeSupportedFormats.QR_CODE!==undefined?[Html5QrcodeSupportedFormats.QR_CODE]:[]),
     ...(Html5QrcodeSupportedFormats.DATA_MATRIX!==undefined?[Html5QrcodeSupportedFormats.DATA_MATRIX]:[])
-  ],experimentalFeatures:{useBarCodeDetectorIfSupported:true},verbose:false});
+  ],verbose:false});
+
   try{
-    await scanner.start({facingMode:"environment"},{fps:10,qrbox:{width:260,height:140}},async txt=>{
-      if(!activo)return;
-      await parar();
-      if(navigator.vibrate)navigator.vibrate(150);
-      mostrar(txt);
-    });
+    const ancho=Math.min(320,Math.max(240,window.innerWidth-64));
+    await scanner.start(
+      {facingMode:{ideal:"environment"}},
+      {fps:15,qrbox:{width:ancho,height:180},aspectRatio:1.7777778},
+      async txt=>{
+        if(!activo)return;
+        const codigo=normalizarLectura(txt);
+        if(!codigo)return;
+
+        // Para códigos EAN/UPC exigimos una lectura válida y dos detecciones seguidas.
+        if(esCodigoBarrasNumerico(codigo)){
+          if(!digitoControlValido(codigo)){
+            if(estadoEscaneo)estadoEscaneo.textContent="📷 Leyendo... mantén el código quieto";
+            return;
+          }
+          const ahora=Date.now();
+          if(codigo===lecturaPendiente && (ahora-tiempoLectura)<1500) lecturasSeguidas++;
+          else { lecturaPendiente=codigo; lecturasSeguidas=1; }
+          tiempoLectura=ahora;
+          if(lecturasSeguidas<2){
+            if(estadoEscaneo)estadoEscaneo.textContent="📷 Confirmando código...";
+            return;
+          }
+        }
+
+        await parar();
+        if(navigator.vibrate)navigator.vibrate(150);
+        mostrar(codigo);
+      },
+      ()=>{}
+    );
   }catch(e){
-    activo=false; btn.textContent="Activar cámara";
-    if(estadoEscaneo)estadoEscaneo.textContent="📷 Escanea el código para identificarlo";
-    alert("No se pudo abrir la cámara. Revisa los permisos (hace falta https).");
+    activo=false;
+    btn.textContent="Activar cámara";
+    if(estadoEscaneo)estadoEscaneo.textContent="📷 No se pudo abrir la cámara. Comprueba el permiso de cámara.";
+    alert("No se pudo abrir la cámara. Revisa el permiso de cámara y que la página esté en HTTPS.");
   }
 }
 
