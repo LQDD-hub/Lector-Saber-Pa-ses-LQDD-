@@ -456,6 +456,14 @@ function extraerResultadosBusquedaJina(txt){
   const add=(url,title="")=>{
     if(!url) return;
     let u=String(url).replace(/&amp;/g,"&").replace(/[),.;]+$/g,"").trim();
+    // DuckDuckGo suele devolver enlaces de redirección con ?uddg=URL.
+    try{
+      if(/^\/\//.test(u)) u="https:"+u;
+      const tmp=new URL(u);
+      const red=tmp.searchParams.get("uddg") || tmp.searchParams.get("url");
+      if(red) u=decodeURIComponent(red);
+    }catch(e){}
+    try{ u=decodeURIComponent(u); }catch(e){}
     if(!/^https?:\/\//i.test(u)) return;
     try{ u=new URL(u).href; }catch(e){ return; }
     const host=new URL(u).hostname.toLowerCase();
@@ -463,17 +471,21 @@ function extraerResultadosBusquedaJina(txt){
     if(seen.has(u)) return;
     seen.add(u); out.push({url:u,title:String(title||"").replace(/\s+/g," ").trim().slice(0,220)});
   };
+  const text=String(txt||"");
   // Markdown links returned by Jina Reader.
-  const md=/\[([^\]]{2,300})\]\((https?:\/\/[^\s)]+)\)/g; let m;
-  while((m=md.exec(String(txt||""))) && out.length<40) add(m[2],m[1]);
-  // HTML anchors, in case the search engine response is not converted to Markdown.
-  const ah=/<a[^>]+href=["'](https?:\/\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-  while((m=ah.exec(String(txt||""))) && out.length<40){
+  const md=/\[([^\]]{2,300})\]\(([^\s)]+)\)/g; let m;
+  while((m=md.exec(text)) && out.length<60) add(m[2],m[1]);
+  // HTML anchors, including protocol-relative and DuckDuckGo redirect links.
+  const ah=/<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  while((m=ah.exec(text)) && out.length<60){
     const title=m[2].replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim(); add(m[1],title);
   }
+  // DuckDuckGo redirect links may appear as plain text.
+  const uddg=/(?:https?:)?\/\/duckduckgo\.com\/l\/\?[^\s<>"']+/gi;
+  while((m=uddg.exec(text)) && out.length<60) add(m[0],"");
   // Bare URLs as final fallback.
   const re=/(https?:\/\/[^\s<>"'\]\)]+)/g;
-  while((m=re.exec(String(txt||""))) && out.length<40) add(m[1],"");
+  while((m=re.exec(text)) && out.length<60) add(m[1],"");
   return out;
 }
 function ventanaConSeñal(txt){
