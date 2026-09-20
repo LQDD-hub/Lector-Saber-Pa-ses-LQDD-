@@ -3,15 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>¿De qué país es?</title>
+<title>LQDD ESCANEA</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#AA151B">
 <link rel="icon" type="image/png" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-180.png">
 <style>
   html{background:#F1BF00}
-  body{font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:16px;min-height:100vh;box-sizing:border-box;background:linear-gradient(#AA151B 0 88px,#F1BF00 88px);color:#2a1a00}
-  h1{font-size:1.4rem;text-align:center;color:#F1BF00;margin:8px 0 40px;text-shadow:0 2px 4px rgba(0,0,0,.4)}
+  body{font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:16px;min-height:100vh;box-sizing:border-box;background:linear-gradient(#AA151B 0 112px,#F1BF00 112px);color:#2a1a00}
+  header.cab{display:flex;align-items:center;gap:12px;height:80px;margin:0 0 32px}
+  .cab img{width:76px;height:76px;flex:none;filter:drop-shadow(0 2px 4px rgba(0,0,0,.5))}
+  .cab h1{font-size:clamp(1.3rem,7vw,1.8rem);letter-spacing:.06em;white-space:nowrap;margin:0;line-height:1.1;color:#F1BF00;text-shadow:0 2px 4px rgba(0,0,0,.4)}
+  .cab p{margin:4px 0 0;font-size:.8rem;line-height:1.25;color:#fff}
   #lector{width:100%;background:#000;border-radius:12px;overflow:hidden;min-height:60px}
   button{width:100%;padding:12px;margin-top:10px;font-size:1rem;border:0;border-radius:10px;background:#AA151B;color:#F1BF00;font-weight:bold}
   .fila{display:flex;gap:8px;margin-top:10px}
@@ -29,7 +32,10 @@
 </style>
 </head>
 <body>
-<h1>📦 ¿De qué país es?</h1>
+<header class="cab">
+  <img src="icon-192.png" alt="LQDD" width="76" height="76">
+  <div><h1>ESCANEA</h1><p>¿Te gustaría saber de qué país es?</p></div>
+</header>
 <div id="lector"></div>
 <button id="btn">Activar cámara</button>
 <div class="fila">
