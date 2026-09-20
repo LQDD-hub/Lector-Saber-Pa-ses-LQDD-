@@ -803,7 +803,9 @@ if(vozBtn){
 }
 
 btn.onclick = () => activo ? parar() : iniciar();
-// No iniciamos la cámara automáticamente: en móviles el permiso de cámara debe solicitarse tras pulsar el botón.
+// Activar la cámara automáticamente al abrir la aplicación.
+// El navegador mostrará el permiso la primera vez si todavía no está concedido.
+window.addEventListener("load", () => { setTimeout(() => iniciar(), 250); }, {once:true});
 
 document.getElementById("ok").onclick = () => mostrar(document.getElementById("manual").value);
 </script>
