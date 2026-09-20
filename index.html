@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>¿De qué país es?</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1a73e8">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<style>
+  body{font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:16px;background:#f5f5f5;color:#222}
+  h1{font-size:1.4rem;text-align:center}
+  #lector{width:100%;background:#000;border-radius:12px;overflow:hidden;min-height:60px}
+  button{width:100%;padding:12px;margin-top:10px;font-size:1rem;border:0;border-radius:10px;background:#1a73e8;color:#fff}
+  .fila{display:flex;gap:8px;margin-top:10px}
+  input{flex:1;padding:12px;font-size:1rem;border:1px solid #bbb;border-radius:10px}
+  .fila button{width:auto;margin:0}
+  #resultado{margin-top:16px;padding:16px;background:#fff;border-radius:12px;text-align:center;display:none}
+  #pais{font-size:1.6rem;font-weight:bold;margin:6px 0}
+  small{color:#666}
+  h2{font-size:1.1rem;margin:22px 0 6px}
+  .item{background:#fff;border-radius:10px;padding:10px 12px;margin-top:6px;font-size:.95rem}
+  .item small{display:block}
+  #borrar{background:#888;padding:8px;font-size:.9rem}
+</style>
+</head>
+<body>
+<h1>📦 ¿De qué país es?</h1>
+<div id="lector"></div>
+<button id="btn">Activar cámara</button>
+<div class="fila">
+  <input id="manual" inputmode="numeric" placeholder="O escribe el código">
+  <button id="ok">Ver</button>
+</div>
+<div id="resultado">
+  <small id="codigo"></small>
+  <div id="pais"></div>
+  <div id="fabrica" style="margin:10px 0;font-size:1.1rem"></div>
+  <small id="origen"></small>
+</div>
+
+<h2>🕘 Historial</h2>
+<div id="hist"></div>
+<button id="borrar">Borrar historial</button>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script>
+// [desde, hasta, país] — prefijos GS1 de 3 dígitos
+const R = [
+[0,19,"EE. UU. / Canadá"],[30,39,"EE. UU."],[60,139,"EE. UU. / Canadá"],
+[300,379,"Francia"],[380,380,"Bulgaria"],[383,383,"Eslovenia"],[385,385,"Croacia"],[387,387,"Bosnia y Herzegovina"],
+[400,440,"Alemania"],[450,459,"Japón"],[460,469,"Rusia"],[470,470,"Kirguistán"],[471,471,"Taiwán"],
+[474,474,"Estonia"],[475,475,"Letonia"],[476,476,"Azerbaiyán"],[477,477,"Lituania"],[478,478,"Uzbekistán"],
+[479,479,"Sri Lanka"],[480,480,"Filipinas"],[481,481,"Bielorrusia"],[482,482,"Ucrania"],[484,484,"Moldavia"],
+[485,485,"Armenia"],[486,486,"Georgia"],[487,487,"Kazajistán"],[489,489,"Hong Kong"],[490,499,"Japón"],
+[500,509,"Reino Unido"],[520,521,"Grecia"],[528,528,"Líbano"],[529,529,"Chipre"],[530,530,"Albania"],
+[531,531,"Macedonia del Norte"],[535,535,"Malta"],[539,539,"Irlanda"],[540,549,"Bélgica / Luxemburgo"],
+[560,560,"Portugal"],[569,569,"Islandia"],[570,579,"Dinamarca"],[590,590,"Polonia"],[594,594,"Rumanía"],
+[599,599,"Hungría"],[600,601,"Sudáfrica"],[603,603,"Ghana"],[608,608,"Baréin"],[609,609,"Mauricio"],
+[611,611,"Marruecos"],[613,613,"Argelia"],[616,616,"Kenia"],[618,618,"Costa de Marfil"],[619,619,"Túnez"],
+[621,621,"Siria"],[622,622,"Egipto"],[624,624,"Libia"],[625,625,"Jordania"],[626,626,"Irán"],
+[627,627,"Kuwait"],[628,628,"Arabia Saudí"],[629,629,"Emiratos Árabes Unidos"],[640,649,"Finlandia"],
+[690,699,"China"],[700,709,"Noruega"],[729,729,"Israel"],[730,739,"Suecia"],[740,740,"Guatemala"],
+[741,741,"El Salvador"],[742,742,"Honduras"],[743,743,"Nicaragua"],[744,744,"Costa Rica"],[745,745,"Panamá"],
+[746,746,"República Dominicana"],[750,750,"México"],[754,755,"Canadá"],[759,759,"Venezuela"],
+[760,769,"Suiza"],[770,771,"Colombia"],[773,773,"Uruguay"],[775,775,"Perú"],[777,777,"Bolivia"],
+[778,779,"Argentina"],[780,780,"Chile"],[784,784,"Paraguay"],[786,786,"Ecuador"],[789,790,"Brasil"],
+[800,839,"Italia"],[840,849,"España"],[850,850,"Cuba"],[858,858,"Eslovaquia"],[859,859,"Chequia"],
+[860,860,"Serbia"],[865,865,"Mongolia"],[867,867,"Corea del Norte"],[868,869,"Turquía"],
+[870,879,"Países Bajos"],[880,880,"Corea del Sur"],[884,884,"Camboya"],[885,885,"Tailandia"],
+[888,888,"Singapur"],[890,890,"India"],[893,893,"Vietnam"],[896,896,"Pakistán"],[899,899,"Indonesia"],
+[900,919,"Austria"],[930,939,"Australia"],[940,949,"Nueva Zelanda"],[955,955,"Malasia"],[958,958,"Macao"]
+];
+
+const ISO = {"EE. UU. / Canadá":"US","EE. UU.":"US","Francia":"FR","Bulgaria":"BG","Eslovenia":"SI","Croacia":"HR","Bosnia y Herzegovina":"BA","Alemania":"DE","Japón":"JP","Rusia":"RU","Kirguistán":"KG","Taiwán":"TW","Estonia":"EE","Letonia":"LV","Azerbaiyán":"AZ","Lituania":"LT","Uzbekistán":"UZ","Sri Lanka":"LK","Filipinas":"PH","Bielorrusia":"BY","Ucrania":"UA","Moldavia":"MD","Armenia":"AM","Georgia":"GE","Kazajistán":"KZ","Hong Kong":"HK","Reino Unido":"GB","Grecia":"GR","Líbano":"LB","Chipre":"CY","Albania":"AL","Macedonia del Norte":"MK","Malta":"MT","Irlanda":"IE","Bélgica / Luxemburgo":"BE","Portugal":"PT","Islandia":"IS","Dinamarca":"DK","Polonia":"PL","Rumanía":"RO","Hungría":"HU","Sudáfrica":"ZA","Ghana":"GH","Baréin":"BH","Mauricio":"MU","Marruecos":"MA","Argelia":"DZ","Kenia":"KE","Costa de Marfil":"CI","Túnez":"TN","Siria":"SY","Egipto":"EG","Libia":"LY","Jordania":"JO","Irán":"IR","Kuwait":"KW","Arabia Saudí":"SA","Emiratos Árabes Unidos":"AE","Finlandia":"FI","China":"CN","Noruega":"NO","Israel":"IL","Suecia":"SE","Guatemala":"GT","El Salvador":"SV","Honduras":"HN","Nicaragua":"NI","Costa Rica":"CR","Panamá":"PA","República Dominicana":"DO","México":"MX","Canadá":"CA","Venezuela":"VE","Suiza":"CH","Colombia":"CO","Uruguay":"UY","Perú":"PE","Bolivia":"BO","Argentina":"AR","Chile":"CL","Paraguay":"PY","Ecuador":"EC","Brasil":"BR","Italia":"IT","España":"ES","Cuba":"CU","Eslovaquia":"SK","Chequia":"CZ","Serbia":"RS","Mongolia":"MN","Corea del Norte":"KP","Turquía":"TR","Países Bajos":"NL","Corea del Sur":"KR","Camboya":"KH","Tailandia":"TH","Singapur":"SG","India":"IN","Vietnam":"VN","Pakistán":"PK","Indonesia":"ID","Austria":"AT","Australia":"AU","Nueva Zelanda":"NZ","Malasia":"MY","Macao":"MO"};
+function bandera(nombre){
+  const c = ISO[nombre];
+  return c ? String.fromCodePoint(...[...c].map(x => 127397 + x.charCodeAt(0))) : "🌍";
+}
+
+// Historial (se guarda en el propio móvil)
+function cargarHist(){ try{ return JSON.parse(localStorage.getItem("hist")||"[]"); }catch(e){ return []; } }
+function guardar(codigo, pais, fab){
+  const h = cargarHist().filter(x => x.codigo !== codigo);
+  h.unshift({codigo, pais, fab, fecha:new Date().toLocaleString("es-ES")});
+  try{ localStorage.setItem("hist", JSON.stringify(h.slice(0,50))); }catch(e){}
+  pintarHist();
+}
+function pintarHist(){
+  const h = cargarHist();
+  document.getElementById("hist").innerHTML = h.length
+    ? h.map(x => '<div class="item">'+bandera(x.pais)+' <b>'+x.pais+'</b>'+(x.fab?' · 🏭 '+x.fab:'')+'<small>'+x.codigo+' · '+x.fecha+'</small></div>').join("")
+    : '<small>Aún no has escaneado nada.</small>';
+}
+document.getElementById("borrar").onclick = () => { try{ localStorage.removeItem("hist"); }catch(e){} pintarHist(); };
+pintarHist();
+
+function paisDe(codigo){
+  const c = codigo.replace(/\D/g,"");
+  if(c.length < 8) return null;
+  // UPC-A (12 dígitos) equivale a EAN-13 con un 0 delante
+  const ean = c.length === 12 ? "0"+c : c;
+  const p = parseInt(ean.slice(0,3),10);
+  const f = R.find(([a,b]) => p>=a && p<=b);
+  return f ? f[2] : "Desconocido / código especial";
+}
+
+async function mostrar(codigo){
+  const pais = paisDe(codigo);
+  document.getElementById("resultado").style.display = "block";
+  document.getElementById("codigo").textContent = "Código: " + codigo;
+  document.getElementById("pais").textContent = pais ? bandera(pais) + " " + pais : "Código no válido";
+  const o = document.getElementById("origen");
+  o.textContent = pais ? "El prefijo indica dónde se registró la marca, no siempre dónde se fabricó." : "";
+  if(!pais) return;
+  const f = document.getElementById("fabrica");
+  f.textContent = "🔎 Buscando dónde se fabricó...";
+  const bases = ["openfoodfacts","openbeautyfacts","openproductsfacts"];
+  let fab = "", ori = "", nombre = "";
+  for(const b of bases){
+    try{
+      const r = await fetch("https://world."+b+".org/api/v2/product/"+codigo+".json?fields=product_name,manufacturing_places,origins");
+      const d = await r.json();
+      if(d.status === 1 && d.product){
+        nombre = nombre || d.product.product_name || "";
+        fab = fab || d.product.manufacturing_places || "";
+        ori = ori || d.product.origins || "";
+        if(fab) break;
+      }
+    }catch(e){}
+  }
+  const partes = [];
+  if(fab) partes.push("🏭 Fabricado en: " + fab);
+  if(ori) partes.push("🌾 Origen de ingredientes: " + ori);
+  if(partes.length){
+    f.innerHTML = (nombre ? "<b>"+nombre+"</b><br>" : "") + partes.join("<br>");
+  }else{
+    f.textContent = "🏭 No hay datos de fabricación para este producto en las bases abiertas.";
+  }
+  guardar(codigo, pais, fab);
+}
+
+let scanner, activo = false, ultimo = "";
+if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
+document.getElementById("btn").onclick = async () => {
+  const btn = document.getElementById("btn");
+  if(activo){ await scanner.stop(); activo=false; btn.textContent="Activar cámara"; return; }
+  scanner = new Html5Qrcode("lector");
+  try{
+    await scanner.start(
+      {facingMode:"environment"},
+      {fps:10, qrbox:{width:260,height:140}},
+      txt => { if(txt !== ultimo){ ultimo = txt; mostrar(txt); setTimeout(() => ultimo = "", 4000); } }
+    );
+    activo = true; btn.textContent = "Parar cámara";
+  }catch(e){ alert("No se pudo abrir la cámara. Revisa los permisos (hace falta https)."); }
+};
+document.getElementById("ok").onclick = () => mostrar(document.getElementById("manual").value);
+</script>
+</body>
+</html>
