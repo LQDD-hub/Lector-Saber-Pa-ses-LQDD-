@@ -50,10 +50,13 @@
   <div id="pais"></div>
   <div id="fabricadoEn" style="margin:10px 0;font-size:1.15rem;font-weight:bold"></div>
   <div id="fabrica" style="margin:10px 0;font-size:1.1rem"></div>
+  <button id="buscaWeb" type="button" style="display:none">🔎 Buscar dónde se fabrica</button>
+  <div id="buscaMsg" style="font-size:.9rem;margin-top:8px"></div>
+  <button id="miLugar" type="button" style="display:none;background:#6b4e00;color:#fff;font-size:.9rem;padding:10px">✏️ Lo sé yo: escribir dónde se fabrica</button>
   <small id="origen"></small>
    <div id="gs1Datos" style="margin-top:12px;text-align:left;font-size:.95rem"></div>
    <div style="margin-top:10px;font-size:.78rem;color:#5a4200">
-     ℹ️ El prefijo GS1 identifica dónde se asignó el número, no necesariamente dónde se fabricó.
+     ℹ️ El prefijo GS1 identifica dónde se asignó el número, no necesariamente dónde se fabricó.<br>📍 Los lugares se ubican con datos de © OpenStreetMap.
    </div>
 </div>
 
@@ -354,6 +357,32 @@ function paisDeTags(tags){
   return null;
 }
 
+// ---------- Ubicar un lugar (ciudad, pueblo, provincia) y saber a qué país pertenece ----------
+// Provincia española según las dos primeras cifras del número sanitario (ES 18.xxxxx/GR = Granada)
+const PROV = {"01":"Álava","02":"Albacete","03":"Alicante","04":"Almería","05":"Ávila","06":"Badajoz","07":"Baleares","08":"Barcelona","09":"Burgos","10":"Cáceres","11":"Cádiz","12":"Castellón","13":"Ciudad Real","14":"Córdoba","15":"A Coruña","16":"Cuenca","17":"Girona","18":"Granada","19":"Guadalajara","20":"Gipuzkoa","21":"Huelva","22":"Huesca","23":"Jaén","24":"León","25":"Lleida","26":"La Rioja","27":"Lugo","28":"Madrid","29":"Málaga","30":"Murcia","31":"Navarra","32":"Ourense","33":"Asturias","34":"Palencia","35":"Las Palmas","36":"Pontevedra","37":"Salamanca","38":"Santa Cruz de Tenerife","39":"Cantabria","40":"Segovia","41":"Sevilla","42":"Soria","43":"Tarragona","44":"Teruel","45":"Toledo","46":"Valencia","47":"Valladolid","48":"Bizkaia","49":"Zamora","50":"Zaragoza","51":"Ceuta","52":"Melilla"};
+function codigosPais(nombre){ return String(nombre||"").split(" / ").map(n=>ISO[n.trim()]).filter(Boolean); }
+async function ubicarLugar(texto,paisHint){
+  const q=String(texto||"").split(/[;|\n]/)[0].trim();
+  if(q.length<2) return null;
+  const ac=new AbortController(), t=setTimeout(()=>ac.abort(),8000);
+  try{
+    const r=await fetch("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&addressdetails=1&accept-language=es&q="+encodeURIComponent(q),{signal:ac.signal});
+    if(!r.ok) return null;
+    const arr=await r.json();
+    const cand=(Array.isArray(arr)?arr:[]).filter(x=>x&&x.address&&x.address.country_code).map(x=>({cc:x.address.country_code.toUpperCase(),pais:x.address.country,lugar:x.display_name}));
+    if(!cand.length) return null;
+    const ambiguo=new Set(cand.map(c=>c.cc)).size>1;
+    let e=cand[0], nota="";
+    if(ambiguo){
+      const h=codigosPais(paisHint), c=cand.find(c=>h.includes(c.cc));
+      if(c){ e=c; nota="Hay varios lugares con ese nombre; elegimos el del país del código de barras"; }
+      else nota="Hay varios lugares con ese nombre; puede no ser este";
+    }
+    return {pais:e.pais,lugar:e.lugar,ambiguo,nota};
+  }catch(err){ return null; }
+  finally{ clearTimeout(t); }
+}
+
 async function buscarProducto(codigo){
   const bases=["openfoodfacts","openbeautyfacts","openproductsfacts"];
   const campos="product_name,abbreviated_product_name,generic_name,brands,quantity,product_quantity,product_quantity_unit,categories,categories_tags,manufacturing_places,manufacturing_places_tags,cities_tags,origins,origins_tags,origin,labels,labels_tags,emb_codes,emb_codes_tags,emb_codes_orig,packaging_text,customer_service,producer,stores,link,knowledge_panels";
@@ -391,10 +420,25 @@ async function buscarProducto(codigo){
 
   let evidencias=[];
   let p;
+  const hintPais=paisDe(codigo);
+  // 0) Lugar que ha indicado el propio usuario para este código
+  const guardado=cargarFab(codigo);
+  if(guardado && String(guardado).trim()){
+    const pg=detectar(guardado);
+    if(pg) evidencias.push({pais:pg,nivel:"confirmado",fuente:"Lugar indicado por ti",detalle:String(guardado)});
+    else{
+      const g=await ubicarLugar(guardado,hintPais);
+      if(g) evidencias.push({pais:g.pais,nivel:"confirmado",fuente:"Lugar indicado por ti (ubicado con OpenStreetMap)",detalle:String(guardado)+" → "+g.lugar+(g.nota?" · "+g.nota:"")});
+    }
+  }
   // 1) Declaración directa: es la evidencia más fuerte.
   if((p=detectar(fab))) evidencias.push({pais:p,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:fab});
   else if((p=paisDeTags(fabTags))) evidencias.push({pais:p,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:Array.isArray(fabTags)?fabTags.join(", "):String(fabTags)});
-  else if(fab && String(fab).trim()) evidencias.push({pais:null,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:String(fab)});
+  else if(fab && String(fab).trim()){
+    const g=await ubicarLugar(fab,hintPais);
+    if(g) evidencias.push({pais:g.pais,nivel:g.ambiguo?"asociado":"confirmado",fuente:"Lugar de fabricación declarado (ubicado con OpenStreetMap)",detalle:String(fab)+" → "+g.lugar+(g.nota?" · "+g.nota:"")});
+    else evidencias.push({pais:null,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:String(fab)});
+  }
 
   // 2) Etiquetas made-in: evidencia asociada, no equivalente a una declaración libre.
   if(!evidencias.length && (p=deEtiqueta(labels))) evidencias.push({pais:p,nivel:"asociado",fuente:"Etiqueta de fabricación/origen del producto",detalle:String(labels)});
@@ -404,7 +448,9 @@ async function buscarProducto(codigo){
   const sm=sanitario.match(/(?:^|[^A-Z])([A-Z]{2})\s?\d[\d.]*\s*(?:CE)?/i);
   if(sm && EMB[sm[1].toUpperCase()]){
     const ep=EMB[sm[1].toUpperCase()];
-    evidencias.push({pais:ep,nivel:"asociado",fuente:"Estampilla sanitaria / código de establecimiento",detalle:sanitario});
+    let det=sanitario;
+    if(sm[1].toUpperCase()==="ES"){ const pm=sanitario.match(/ES\s*(\d{2})[.\s]/i); if(pm && PROV[pm[1]]) det+=" → provincia de "+PROV[pm[1]]+" (según el número de registro)"; }
+    evidencias.push({pais:ep,nivel:"asociado",fuente:"Estampilla sanitaria / código de establecimiento",detalle:det});
   }
 
   // 4) EMB francés: es un código geográfico de una empresa de envasado/condicionado.
@@ -445,6 +491,73 @@ async function buscarProducto(codigo){
 function cargarFab(c){ try{ return JSON.parse(localStorage.getItem("fab_"+c)||"null"); }catch(e){ return null; } }
 function guardarFab(c,p){ try{ localStorage.setItem("fab_"+c, JSON.stringify(p)); }catch(e){} }
 
+// ---------- Búsqueda automática: otros productos de la misma marca y nombre ----------
+async function pedirJSON(url,ms){
+  const ac=new AbortController(), t=setTimeout(()=>ac.abort(),ms||10000);
+  try{ const r=await fetch(url,{signal:ac.signal}); if(!r.ok) return null; return await r.json(); }
+  catch(e){ return null; }
+  finally{ clearTimeout(t); }
+}
+const espera=ms=>new Promise(r=>setTimeout(r,ms));
+function palabras(t){ return norm(t).split(/[^a-z0-9]+/).filter(w=>w.length>=3); }
+
+async function buscarEnWeb(a){
+  const info=a.info;
+  const marca=String(info.marca||"").split(",")[0].trim();
+  const nombre=String(info.nombre||info.denominacion||"").trim();
+  if(!marca && !nombre) return {error:"sin-datos"};
+  const campos="code,product_name,brands,manufacturing_places,emb_codes,labels_tags";
+  const slug=norm(marca).replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"");
+  const termino=[marca,nombre].filter(Boolean).join(" ");
+  const urls=[];
+  for(const b of ["openfoodfacts","openbeautyfacts","openproductsfacts"]){
+    if(slug) urls.push("https://world."+b+".org/api/v2/search?brands_tags="+encodeURIComponent(slug)+"&fields="+campos+"&page_size=60");
+    urls.push("https://world."+b+".org/cgi/search.pl?action=process&json=1&search_simple=1&page_size=40&fields="+campos+"&search_terms="+encodeURIComponent(termino));
+  }
+  const resp=await Promise.all(urls.map(u=>pedirJSON(u,12000)));
+  const vistos=new Set([String(a.codigo)]), cand=[];
+  const pn=palabras(nombre), mn=norm(marca);
+  for(const d of resp){
+    for(const p of ((d&&d.products)||[])){
+      if(!p||!p.code||vistos.has(String(p.code))) continue;
+      vistos.add(String(p.code));
+      if(mn && !norm(p.brands).includes(mn)) continue;      // misma marca
+      const pw=palabras(p.product_name);
+      const comunes=pn.filter(w=>pw.includes(w)).length;
+      if(!mn && comunes<2) continue;                        // sin marca: exigimos nombre muy parecido
+      cand.push({p,peso:comunes>=2?3:1});                   // los de nombre parecido pesan más
+    }
+  }
+  const votos={}, ejemplos=[], pendientes=[];
+  const sumar=(pais,c,txt)=>{ votos[pais]=(votos[pais]||0)+c.peso; if(ejemplos.length<4) ejemplos.push((c.p.product_name||c.p.code)+" → "+txt); };
+  for(const c of cand){
+    const p=c.p, fab=String(p.manufacturing_places||"").trim();
+    let pais=fab?detectar(fab):null;
+    if(!pais) pais=deEtiqueta(p.labels_tags);
+    if(!pais && p.emb_codes) pais=deEmb(p.emb_codes);
+    if(pais) sumar(pais,c,pais+(fab?" ("+fab+")":""));
+    else if(fab) pendientes.push({c,fab});
+  }
+  // Los lugares que son solo pueblo/ciudad: averiguamos su país (máx. 3 consultas, con pausa)
+  {
+    const vf=new Set(); let n=0;
+    for(const {c,fab} of pendientes){
+      const k=norm(fab); if(vf.has(k)) continue; vf.add(k);
+      if(n>=3) break;
+      if(n>0) await espera(1100);
+      n++;
+      const g=await ubicarLugar(fab,a.prefijo);
+      if(g) sumar(g.pais,c,g.pais+" ("+fab+")");
+    }
+  }
+  const orden=Object.entries(votos).sort((x,y)=>y[1]-x[1]);
+  if(!orden.length) return {error:cand.length?"sin-fabricacion":"sin-parecidos"};
+  const pais=orden[0][0], otros=orden.slice(1).map(x=>x[0]);
+  return {pais,nivel:"asociado",fuente:"Búsqueda en la web: otros productos de la misma marca",
+    detalle:ejemplos.join(" · ")+(otros.length?" · También aparece: "+otros.join(", "):""),
+    voz:"Buscando en la web, otros productos de la misma marca se fabrican en "+pais+". Es una pista, no una confirmación"};
+}
+
 let actual = null; // {codigo, prefijo, info}
 const $ = id => document.getElementById(id);
 
@@ -455,7 +568,7 @@ async function mostrar(codigo){
   const prefijo = paisDe(codigoProducto);
   const cuadro = $("resultado"); cuadro.style.display="block"; cuadro.className=""; actual=null;
   $("codigo").textContent="Código: "+codigo;
-  $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("gs1Datos").innerHTML="";
+  $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("gs1Datos").innerHTML=""; $("buscaMsg").textContent=""; $("miLugar").style.display="none"; $("buscaWeb").style.display="none";
   if(!prefijo){ $("pais").textContent="Código no válido"; hablar("Código no válido"); return; }
   $("pais").textContent="🔎 Consultando información del producto...";
   const info=await buscarProducto(codigoProducto); actual={codigo:codigoProducto,prefijo,info,gs1Raw}; pintar();
@@ -516,7 +629,7 @@ function pintarGS1(raw){
   box.innerHTML=h ? '<div style="padding:10px;background:#fff7d6;border-radius:10px;border:1px solid #e0c45c">'+h+'</div>' : '';
   return d;
 }
-function pintar(){
+function pintar(silencio){
   const {codigo,prefijo,info}=actual, cuadro=$("resultado");
   const gs1=pintarGS1(actual.gs1Raw||"");
   const paisPrefijo=prefijo==="España / Andorra"?"España":prefijo;
@@ -541,7 +654,7 @@ function pintar(){
     $("fabricadoEn").textContent=(info.prod.nivel==="confirmado"?"🟢 ":"🟡 ")+"Fabricado en "+paisFab;
     if(!mismo) html+="<br>⚠️ El prefijo GS1 es "+esc(paisPrefijo)+", pero la evidencia de fabricación/establecimiento apunta a "+esc(paisFab)+".";
   }else{
-    html+="⚪ <b>Fabricación: no disponible</b><br><small>No encontramos una evidencia pública suficiente para afirmar el país de fabricación. Sí mostramos abajo las pistas de establecimiento/envasador cuando existen.</small>";
+    html+="⚪ <b>Fabricación: no disponible</b><br><small>No encontramos una evidencia pública suficiente para afirmar el país de fabricación. Si tú lo sabes, pulsa «Yo sé dónde se fabrica». Sí mostramos abajo las pistas de establecimiento/envasador cuando existen.</small>";
     $("fabricadoEn").textContent="⚪ Fabricación: no disponible";
   }
   if(info.fab) html+="<br>📍 <b>Lugar registrado:</b> "+esc(info.fab);
@@ -556,8 +669,9 @@ function pintar(){
     });
   }
   $("fabrica").innerHTML=html;
-  if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia();
-  const detalle=tieneFabricacion?(info.prod.nivel==="confirmado"?"El producto tiene un dato de fabricación declarado en "+paisFab:"Hay una evidencia asociada a un establecimiento en "+paisFab+", pero no demuestra por sí sola la fabricación"):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no hay una evidencia pública suficiente para confirmar dónde se fabricó.";
+  $("buscaWeb").style.display=tieneFabricacion?"none":"block";
+  if(!silencio){ if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia(); }
+  const detalle=tieneFabricacion?(info.prod.nivel==="confirmado"?"El producto tiene un dato de fabricación declarado en "+paisFab:(info.prod.voz||"Hay una evidencia asociada a un establecimiento en "+paisFab+", pero no demuestra por sí sola la fabricación")):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no hay una evidencia pública suficiente para confirmar dónde se fabricó.";
   hablar((frase?frase+" ":"")+detalle);
   guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1");
 }
@@ -616,6 +730,34 @@ if(vozBtn){
 btn.onclick = () => activo ? parar() : iniciar();
 window.addEventListener("load", iniciar);
 document.getElementById("ok").onclick = () => mostrar(document.getElementById("manual").value);
+document.getElementById("miLugar").onclick = async () => {
+  if(!actual) return;
+  const t=prompt("¿Dónde se fabrica este producto?\nEscribe el lugar y, si puedes, la provincia o el país.\nEjemplo: Loja, Granada, España");
+  if(!t || !t.trim()) return;
+  guardarFab(actual.codigo,t.trim());
+  $("pais").textContent="🔎 Buscando ese lugar...";
+  actual.info=await buscarProducto(actual.codigo);
+  pintar(true);
+};
+document.getElementById("buscaWeb").onclick = async () => {
+  if(!actual) return;
+  const b=$("buscaWeb"), msg=$("buscaMsg");
+  b.disabled=true; b.textContent="🔎 Buscando en la web..."; msg.textContent="";
+  let r=null;
+  try{ r=await buscarEnWeb(actual); }catch(e){ r={error:"fallo"}; }
+  b.disabled=false; b.textContent="🔎 Buscar dónde se fabrica";
+  if(r && r.pais){
+    actual.info.evidencias=(actual.info.evidencias||[]).concat([r]);
+    actual.info.prod=r;
+    pintar(true);
+  }else{
+    const m={"sin-datos":"Este código no está en las bases de datos y no tengo ni marca ni nombre para buscarlo.",
+             "sin-parecidos":"No encontré otros productos de esa marca en las bases abiertas.",
+             "sin-fabricacion":"Encontré productos de esa marca, pero ninguno dice dónde se fabrica."};
+    msg.textContent="😕 "+(m[r&&r.error]||"No pude completar la búsqueda. Comprueba tu conexión.")+" ¿Lo sabes tú?";
+    $("miLugar").style.display="block";
+  }
+};
 </script>
 </body>
 </html>
