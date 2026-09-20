@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LQDD ESCANEA</title>
+<title>LQDD SCANNER</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#AA151B">
 <link rel="icon" type="image/png" href="icon-192.png">
@@ -38,9 +38,8 @@
   <div><h1>SCANNER</h1><p>¿Te gustaría saber de qué país es?</p></div>
 </header>
 <div id="lector"></div>
+<div id="estadoEscaneo" style="margin:8px 0;text-align:center;font-size:.85rem;color:#5a4200">📷 Código + Made in</div>
 <button id="btn">Activar cámara</button>
-<button id="etiquetaBtn" type="button" style="background:#7a0f14;color:#F1BF00">📷 Leer “Made in”</button>
-<input type="file" id="etiquetaFoto" accept="image/*" capture="environment" hidden>
 <button id="vozBtn" type="button" style="background:#6b4e00;color:#fff">🔊 Voz: ACTIVADA</button>
 <div class="fila">
   <input id="manual" inputmode="numeric" placeholder="O escribe el código">
@@ -373,7 +372,7 @@ function guardarFab(c,p){ try{ localStorage.setItem("fab_"+c, JSON.stringify(p))
 let actual = null; // {codigo, prefijo, info}
 const $ = id => document.getElementById(id);
 
-async function mostrar(codigo){
+async function mostrar(codigo, madeInPais=null){
   const prefijo = paisDe(codigo);
   const cuadro = $("resultado");
   cuadro.style.display = "block";
@@ -390,12 +389,12 @@ async function mostrar(codigo){
   const info = await buscarProducto(codigo);
   const g = cargarFab(codigo);
   if(g) info.prod = g; // lo que leíste tú en la etiqueta manda
-  actual = {codigo, prefijo, info};
+  actual = {codigo, prefijo, info, madeInPais};
   pintar();
 }
 
 function pintar(){
-  const {codigo, prefijo, info} = actual;
+  const {codigo, prefijo, info, madeInPais} = actual;
   const cuadro = $("resultado");
   const confirmado = !!info.prod;
   const pais = confirmado ? (info.prod.pais === "España / Andorra" ? "España" : info.prod.pais) : (prefijo === "España / Andorra" ? "España" : prefijo);
@@ -420,6 +419,11 @@ function pintar(){
   if(info.fab) html += "<br>📍 " + esc(info.fab);
   if(info.ori) html += "<br>🌾 Ingredientes de: " + esc(info.ori);
   $("fabrica").innerHTML = html;
+  if($("fabricadoEn")){
+    $("fabricadoEn").textContent = madeInPais
+      ? "🏭 Fabricado en " + madeInPais + " · leído en la etiqueta"
+      : (info.prod ? "🏭 Fabricado en " + info.prod.pais : "");
+  }
 
   if(pais === "España") fanfarriaEspana();
   if(pais === "Marruecos") pitidoEmergencia();
@@ -428,40 +432,121 @@ function pintar(){
 }
 
 let scanner, activo = false, ultimo = "";
+let ocrWorker = null;
+let ocrTimer = null;
+let ultimoMadeIn = null;
+let ocrOcupado = false;
+
 if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
 const btn = document.getElementById("btn");
+const estadoEscaneo = document.getElementById("estadoEscaneo");
+
+async function iniciarOCR(){
+  if(ocrWorker || typeof Tesseract === "undefined") return;
+  try{
+    ocrWorker = await Tesseract.createWorker("spa+eng", 1, {logger:()=>{}});
+  }catch(e){
+    ocrWorker = null;
+  }
+}
+
+async function leerTextoDeCamara(){
+  if(!activo || ocrOcupado || !ocrWorker) return;
+  const video = document.querySelector("#lector video");
+  if(!video || !video.videoWidth || !video.videoHeight) return;
+
+  ocrOcupado = true;
+  try{
+    const maxW = 1100;
+    const escala = Math.min(1, maxW / video.videoWidth);
+    const c = document.createElement("canvas");
+    c.width = Math.round(video.videoWidth * escala);
+    c.height = Math.round(video.videoHeight * escala);
+    const x = c.getContext("2d");
+    x.filter = "grayscale(1) contrast(1.45)";
+    x.drawImage(video, 0, 0, c.width, c.height);
+
+    const r = await ocrWorker.recognize(c);
+    const texto = (r.data && r.data.text) || "";
+    const pais = detectarMadeIn(texto);
+
+    if(pais){
+      ultimoMadeIn = pais;
+      if(estadoEscaneo) estadoEscaneo.textContent = "🏭 Made in " + pais + " detectado";
+    }else if(estadoEscaneo){
+      estadoEscaneo.textContent = "📷 Buscando código y «Made in…»";
+    }
+  }catch(e){
+    // El OCR es complementario: si falla, el lector de código sigue funcionando.
+  }finally{
+    ocrOcupado = false;
+  }
+}
+
+function iniciarOCRLoop(){
+  if(ocrTimer) clearInterval(ocrTimer);
+  ocrTimer = setInterval(leerTextoDeCamara, 1800);
+}
+
+async function pararOCR(){
+  if(ocrTimer){ clearInterval(ocrTimer); ocrTimer = null; }
+  if(ocrWorker){
+    try{ await ocrWorker.terminate(); }catch(e){}
+    ocrWorker = null;
+  }
+  ocrOcupado = false;
+}
+
 async function parar(){
   if(!activo) return;
   activo = false;
+  if(ocrTimer){ clearInterval(ocrTimer); ocrTimer = null; }
   try{ await scanner.stop(); scanner.clear(); }catch(e){}
+  await pararOCR();
   btn.textContent = "📷 Escanear otro";
+  if(estadoEscaneo) estadoEscaneo.textContent = "📷 Código + Made in";
 }
+
 async function iniciar(){
   if(activo) return;
   activo = true;
+  ultimoMadeIn = null;
   btn.textContent = "Parar cámara";
+  if(estadoEscaneo) estadoEscaneo.textContent = "📷 Buscando código y «Made in…»";
   scanner = new Html5Qrcode("lector", {
-    formatsToSupport: [Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E],
+    formatsToSupport: [
+      Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.EAN_8,
+      Html5QrcodeSupportedFormats.UPC_A,
+      Html5QrcodeSupportedFormats.UPC_E
+    ],
     experimentalFeatures: {useBarCodeDetectorIfSupported: true},
     verbose: false
   });
+
   try{
     await scanner.start(
       {facingMode:"environment"},
       {fps:10, qrbox:{width:260,height:140}},
       async txt => {
         if(!activo) return;
+        const made = ultimoMadeIn;
         await parar();
         if(navigator.vibrate) navigator.vibrate(150);
-        mostrar(txt);
+        mostrar(txt, made);
       }
     );
+    iniciarOCR();
+    iniciarOCRLoop();
   }catch(e){
     activo = false;
+    await pararOCR();
     btn.textContent = "Activar cámara";
+    if(estadoEscaneo) estadoEscaneo.textContent = "📷 Código + Made in";
     alert("No se pudo abrir la cámara. Revisa los permisos (hace falta https).");
   }
 }
+
 const vozBtn = document.getElementById("vozBtn");
 if(vozBtn){
   actualizarBotonVoz();
@@ -472,28 +557,6 @@ if(vozBtn){
       try{ speechSynthesis.cancel(); }catch(e){}
     }
     actualizarBotonVoz();
-  };
-}
-
-
-const etiquetaBtn = document.getElementById("etiquetaBtn");
-const etiquetaFoto = document.getElementById("etiquetaFoto");
-
-if(etiquetaBtn && etiquetaFoto){
-  etiquetaBtn.onclick = () => etiquetaFoto.click();
-  etiquetaFoto.onchange = async e => {
-    const f = e.target.files[0];
-    e.target.value = "";
-    if(!f) return;
-    etiquetaBtn.textContent = "⏳ Leyendo Made in...";
-    const paisMade = await leerMadeInDeImagen(f);
-    if($("fabricadoEn")){
-      $("fabricadoEn").textContent = paisMade
-        ? "🏭 Fabricado en " + paisMade
-        : "ℹ️ No he encontrado «Made in» / «Fabricado en» en la etiqueta";
-    }
-    etiquetaBtn.textContent = "📷 Leer “Made in”";
-    if(paisMade) hablar("Fabricado en " + paisMade);
   };
 }
 
