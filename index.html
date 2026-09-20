@@ -30,7 +30,6 @@
   .item small{display:block}
   #borrar{background:#6b4e00;color:#fff;padding:8px;font-size:.9rem}
 </style>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
 <header class="cab">
@@ -38,7 +37,7 @@
   <div><h1>SCANNER</h1><p>¿Te gustaría saber de qué país es?</p></div>
 </header>
 <div id="lector"></div>
-<div id="estadoEscaneo" style="margin:8px 0;text-align:center;font-size:.85rem;color:#5a4200">📷 Código + Made in</div>
+<div id="estadoEscaneo" style="margin:8px 0;text-align:center;font-size:.85rem;color:#5a4200">📷 Escanea el código para identificarlo</div>
 <button id="btn">Activar cámara</button>
 <button id="vozBtn" type="button" style="background:#6b4e00;color:#fff">🔊 Voz: ACTIVADA</button>
 <div class="fila">
@@ -50,6 +49,7 @@
   <div id="frase" style="font-size:1.4rem;font-weight:bold;margin:8px 0"></div>
   <div id="pais"></div>
   <div id="fabricadoEn" style="margin:10px 0;font-size:1.15rem;font-weight:bold"></div>
+  <div id="precio" style="margin:10px 0;font-size:1.15rem;font-weight:bold"></div>
   <div id="fabrica" style="margin:10px 0;font-size:1.1rem"></div>
   <small id="origen"></small>
    <div style="margin-top:10px;font-size:.78rem;color:#5a4200">
@@ -343,13 +343,31 @@ function deEtiqueta(tags){
   return null;
 }
 
+async function buscarPrecio(codigo){
+  try{
+    const ac=new AbortController();
+    const t=setTimeout(()=>ac.abort(),5000);
+    try{
+      const r=await fetch("https://prices.openfoodfacts.org/api/v1/prices?product_code="+encodeURIComponent(codigo)+"&page_size=20",{signal:ac.signal,headers:{"Accept":"application/json"}});
+      if(!r.ok) return null;
+      const d=await r.json();
+      const lista=Array.isArray(d)?d:(d.results||d.items||[]);
+      const valid=lista.filter(x=>x && x.price!=null && Number.isFinite(Number(x.price)));
+      if(!valid.length) return null;
+      valid.sort((a,b)=>String(b.date||b.created||"").localeCompare(String(a.date||a.created||"")));
+      const x=valid[0];
+      return {price:Number(x.price),currency:x.currency||"EUR",date:x.date||null,location:x.location_id||null,discounted:!!x.price_is_discounted};
+    }finally{clearTimeout(t)}
+  }catch(e){return null}
+}
+
 async function buscarProducto(codigo){
   const bases = ["openfoodfacts","openbeautyfacts","openproductsfacts"];
   const res = await Promise.all(bases.map(async b => {
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), 5000);
     try{
-      const r = await fetch("https://world."+b+".org/api/v2/product/"+codigo+".json?fields=product_name,manufacturing_places,origins,emb_codes,labels_tags", {signal: ac.signal});
+      const r = await fetch("https://world."+b+".org/api/v2/product/"+codigo+".json?fields=product_name,manufacturing_places,manufacturing_places_tags,origins,labels_tags", {signal: ac.signal});
       const d = await r.json();
       return d.status === 1 ? d.product : null;
     }catch(e){ return null; }
@@ -359,10 +377,10 @@ async function buscarProducto(codigo){
   const campo = c => ps.map(p => p[c]).find(v => v && (!Array.isArray(v) || v.length)) || "";
   const nombre = campo("product_name"), fab = campo("manufacturing_places"), ori = campo("origins");
   let prod = null, p;
-  if((p = detectar(fab))) prod = {pais:p, fuente:"lugar de fabricación"};
-  else if((p = deEtiqueta(campo("labels_tags")))) prod = {pais:p, fuente:"etiqueta «Hecho en»"};
-  else if((p = deEmb(campo("emb_codes")))) prod = {pais:p, fuente:"código de envasador"};
-  return {nombre, fab, ori, prod};
+  if((p = detectar(fab))) prod = {pais:p, fuente:"base de datos · lugar de fabricación"};
+  else if((p = deEtiqueta(campo("labels_tags")))) prod = {pais:p, fuente:"base de datos · información de origen"};
+  const precio=await buscarPrecio(codigo);
+  return {nombre, fab, ori, prod, precio};
 }
 
 // País guardado en el móvil para un código (por ejemplo, leído de la etiqueta)
@@ -372,177 +390,82 @@ function guardarFab(c,p){ try{ localStorage.setItem("fab_"+c, JSON.stringify(p))
 let actual = null; // {codigo, prefijo, info}
 const $ = id => document.getElementById(id);
 
-async function mostrar(codigo, madeInPais=null){
+async function mostrar(codigo){
   const prefijo = paisDe(codigo);
-  const cuadro = $("resultado");
-  cuadro.style.display = "block";
-  cuadro.className = "";
-  actual = null;
-  $("codigo").textContent = "Código: " + codigo;
-  $("frase").textContent = ""; $("fabrica").textContent = ""; $("origen").textContent = ""; if($("fabricadoEn")) $("fabricadoEn").textContent = "";
-  if(!prefijo){
-    $("pais").textContent = "Código no válido";
-    hablar("Código no válido");
-    return;
-  }
-  $("pais").textContent = "🔎 Buscando dónde se fabricó...";
-  const info = await buscarProducto(codigo);
-  const g = cargarFab(codigo);
-  if(g) info.prod = g; // lo que leíste tú en la etiqueta manda
-  actual = {codigo, prefijo, info, madeInPais};
-  pintar();
+  const cuadro = $("resultado"); cuadro.style.display="block"; cuadro.className=""; actual=null;
+  $("codigo").textContent="Código: "+codigo;
+  $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("precio").textContent="💰 Buscando precio...";
+  if(!prefijo){ $("pais").textContent="Código no válido"; hablar("Código no válido"); return; }
+  $("pais").textContent="🔎 Consultando información del producto...";
+  const info=await buscarProducto(codigo); actual={codigo,prefijo,info}; pintar();
 }
 
 function pintar(){
-  const {codigo, prefijo, info, madeInPais} = actual;
-  const cuadro = $("resultado");
-  const confirmado = !!info.prod;
-  const pais = confirmado ? (info.prod.pais === "España / Andorra" ? "España" : info.prod.pais) : (prefijo === "España / Andorra" ? "España" : prefijo);
-  const desconocido = !confirmado && prefijo.startsWith("Desconocido");
-  const nombre = pais === "España / Andorra" ? "España" : pais.split(" / ")[0];
-
-  $("pais").textContent = desconocido ? "🌍 País desconocido" : bandera(pais) + " " + pais;
-  let frase = "";
-  cuadro.className = "";
-  if(!desconocido){
-    frase = pais === "España" ? "¡Viva España!" : (pais === "Marruecos" ? "¡No, no, no, Marruecos no!" : "¡No!");
-    cuadro.className = pais === "España" ? "ok" : "mal";
+  const {codigo,prefijo,info}=actual, cuadro=$("resultado");
+  const paisPrefijo=prefijo==="España / Andorra"?"España":prefijo;
+  const paisFab=info.prod?(info.prod.pais==="España / Andorra"?"España":info.prod.pais):null;
+  const tieneFabricacion=!!paisFab, desconocido=!paisPrefijo||paisPrefijo.startsWith("Desconocido");
+  $("pais").textContent=desconocido?"🌍 País GS1 desconocido":bandera(paisPrefijo)+" "+paisPrefijo;
+  let frase=""; cuadro.className="";
+  if(!desconocido){ frase=paisPrefijo==="España"?"¡Viva España!":(paisPrefijo==="Marruecos"?"¡No, no, no, Marruecos no!":"¡No!"); cuadro.className=paisPrefijo==="España"?"ok":"mal"; }
+  $("frase").textContent=frase;
+  let html=info.nombre?"<b>"+esc(info.nombre)+"</b><br>":"";
+  if(tieneFabricacion){
+    const mismo=norm(paisPrefijo)===norm(paisFab);
+    if(!mismo){
+      html+="⚠️ <b>"+esc(paisPrefijo)+" — ERRÓNEO COMO PAÍS DE FABRICACIÓN</b><br>🏭 <b>Fabricado en: "+esc(paisFab)+"</b> <small>("+esc(info.prod.fuente)+")</small>";
+      $("fabricadoEn").textContent="❌ "+paisPrefijo+" — Fabricado en "+paisFab;
+    }else{
+      html+="✅ <b>Fabricado en: "+esc(paisFab)+"</b> <small>("+esc(info.prod.fuente)+")</small>";
+      $("fabricadoEn").textContent="✅ Fabricado en "+paisFab;
+    }
+  }else{
+    html+="🏷️ <b>País del prefijo GS1: "+esc(paisPrefijo)+"</b><br><small>⚪ No hay datos suficientes para confirmar dónde se fabricó.</small>";
+    $("fabricadoEn").textContent="🏭 Fabricación: no disponible";
   }
-  $("frase").textContent = frase;
-
-  const detalle = confirmado
-    ? "Producido en " + nombre
-    : (desconocido ? "No sé de qué país es" : "Según el código de barras, es de " + nombre);
-  let html = info.nombre ? "<b>"+esc(info.nombre)+"</b><br>" : "";
-  if(confirmado) html += "🏭 Producido en <b>"+esc(pais)+"</b> <small>("+info.prod.fuente+")</small>";
-  else html += "🏷️ Según el código de barras. <small>No consta dónde se fabricó: el prefijo solo indica dónde se registró la marca.</small>";
-  if(info.fab) html += "<br>📍 " + esc(info.fab);
-  if(info.ori) html += "<br>🌾 Ingredientes de: " + esc(info.ori);
-  $("fabrica").innerHTML = html;
-  if($("fabricadoEn")){
-    $("fabricadoEn").textContent = madeInPais
-      ? "🏭 Fabricado en " + madeInPais + " · leído en la etiqueta"
-      : (info.prod ? "🏭 Fabricado en " + info.prod.pais : "");
+  if(info.fab) html+="<br>📍 Lugar registrado: "+esc(info.fab);
+  if(info.ori) html+="<br>🌾 Origen declarado: "+esc(info.ori);
+  if(info.precio){
+    const simbolo=info.precio.currency==="EUR"?"€":info.precio.currency;
+    const fecha=info.precio.date?" · dato de "+esc(info.precio.date):"";
+    $("precio").innerHTML="💰 <b>Precio registrado: "+info.precio.price.toFixed(2)+" "+esc(simbolo)+"</b><small>"+fecha+"</small>";
+  }else{
+    $("precio").textContent="💰 Precio: no disponible";
   }
-
-  if(pais === "España") fanfarriaEspana();
-  if(pais === "Marruecos") pitidoEmergencia();
-  hablar((frase ? frase + " " : "") + detalle);
-  guardar(codigo, desconocido ? "Desconocido" : pais, confirmado ? "producido en " + nombre : "según el código");
+  $("fabrica").innerHTML=html;
+  if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia();
+  const detalle=tieneFabricacion?(norm(paisPrefijo)===norm(paisFab)?"El producto figura como fabricado en "+paisFab:paisPrefijo+" es el país del prefijo GS1, pero el producto figura como fabricado en "+paisFab):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no hay datos suficientes para saber dónde se fabricó.";
+  hablar((frase?frase+" ":"")+detalle);
+  guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1");
 }
-
-let scanner, activo = false, ultimo = "";
-let ocrWorker = null;
-let ocrTimer = null;
-let ultimoMadeIn = null;
-let ocrOcupado = false;
 
 if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
 const btn = document.getElementById("btn");
 const estadoEscaneo = document.getElementById("estadoEscaneo");
-
-async function iniciarOCR(){
-  if(ocrWorker || typeof Tesseract === "undefined") return;
-  try{
-    ocrWorker = await Tesseract.createWorker("spa+eng", 1, {logger:()=>{}});
-  }catch(e){
-    ocrWorker = null;
-  }
-}
-
-async function leerTextoDeCamara(){
-  if(!activo || ocrOcupado || !ocrWorker) return;
-  const video = document.querySelector("#lector video");
-  if(!video || !video.videoWidth || !video.videoHeight) return;
-
-  ocrOcupado = true;
-  try{
-    const maxW = 1100;
-    const escala = Math.min(1, maxW / video.videoWidth);
-    const c = document.createElement("canvas");
-    c.width = Math.round(video.videoWidth * escala);
-    c.height = Math.round(video.videoHeight * escala);
-    const x = c.getContext("2d");
-    x.filter = "grayscale(1) contrast(1.45)";
-    x.drawImage(video, 0, 0, c.width, c.height);
-
-    const r = await ocrWorker.recognize(c);
-    const texto = (r.data && r.data.text) || "";
-    const pais = detectarMadeIn(texto);
-
-    if(pais){
-      ultimoMadeIn = pais;
-      if(estadoEscaneo) estadoEscaneo.textContent = "🏭 Made in " + pais + " detectado";
-    }else if(estadoEscaneo){
-      estadoEscaneo.textContent = "📷 Buscando código y «Made in…»";
-    }
-  }catch(e){
-    // El OCR es complementario: si falla, el lector de código sigue funcionando.
-  }finally{
-    ocrOcupado = false;
-  }
-}
-
-function iniciarOCRLoop(){
-  if(ocrTimer) clearInterval(ocrTimer);
-  ocrTimer = setInterval(leerTextoDeCamara, 1800);
-}
-
-async function pararOCR(){
-  if(ocrTimer){ clearInterval(ocrTimer); ocrTimer = null; }
-  if(ocrWorker){
-    try{ await ocrWorker.terminate(); }catch(e){}
-    ocrWorker = null;
-  }
-  ocrOcupado = false;
-}
+let scanner, activo=false, ultimo="";
 
 async function parar(){
-  if(!activo) return;
-  activo = false;
-  if(ocrTimer){ clearInterval(ocrTimer); ocrTimer = null; }
-  try{ await scanner.stop(); scanner.clear(); }catch(e){}
-  await pararOCR();
-  btn.textContent = "📷 Escanear otro";
-  if(estadoEscaneo) estadoEscaneo.textContent = "📷 Código + Made in";
+  if(!activo)return; activo=false;
+  try{await scanner.stop();scanner.clear();}catch(e){}
+  btn.textContent="📷 Escanear otro";
+  if(estadoEscaneo)estadoEscaneo.textContent="📷 Escanea el código para identificarlo";
 }
 
 async function iniciar(){
-  if(activo) return;
-  activo = true;
-  ultimoMadeIn = null;
-  btn.textContent = "Parar cámara";
-  if(estadoEscaneo) estadoEscaneo.textContent = "📷 Buscando código y «Made in…»";
-  scanner = new Html5Qrcode("lector", {
-    formatsToSupport: [
-      Html5QrcodeSupportedFormats.EAN_13,
-      Html5QrcodeSupportedFormats.EAN_8,
-      Html5QrcodeSupportedFormats.UPC_A,
-      Html5QrcodeSupportedFormats.UPC_E
-    ],
-    experimentalFeatures: {useBarCodeDetectorIfSupported: true},
-    verbose: false
-  });
-
+  if(activo)return; activo=true;
+  btn.textContent="Parar cámara";
+  if(estadoEscaneo)estadoEscaneo.textContent="📷 Buscando código...";
+  scanner=new Html5Qrcode("lector",{formatsToSupport:[Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,Html5QrcodeSupportedFormats.UPC_A,Html5QrcodeSupportedFormats.UPC_E],experimentalFeatures:{useBarCodeDetectorIfSupported:true},verbose:false});
   try{
-    await scanner.start(
-      {facingMode:"environment"},
-      {fps:10, qrbox:{width:260,height:140}},
-      async txt => {
-        if(!activo) return;
-        const made = ultimoMadeIn;
-        await parar();
-        if(navigator.vibrate) navigator.vibrate(150);
-        mostrar(txt, made);
-      }
-    );
-    iniciarOCR();
-    iniciarOCRLoop();
+    await scanner.start({facingMode:"environment"},{fps:10,qrbox:{width:260,height:140}},async txt=>{
+      if(!activo)return;
+      await parar();
+      if(navigator.vibrate)navigator.vibrate(150);
+      mostrar(txt);
+    });
   }catch(e){
-    activo = false;
-    await pararOCR();
-    btn.textContent = "Activar cámara";
-    if(estadoEscaneo) estadoEscaneo.textContent = "📷 Código + Made in";
+    activo=false; btn.textContent="Activar cámara";
+    if(estadoEscaneo)estadoEscaneo.textContent="📷 Escanea el código para identificarlo";
     alert("No se pudo abrir la cámara. Revisa los permisos (hace falta https).");
   }
 }
