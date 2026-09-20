@@ -331,7 +331,6 @@ function detectar(texto){
 // Código de envasador/sanitario de la UE: "ES 10.02547/H CE", "FR 35.123.001 CE", "EMB 35123"
 function deEmb(texto){
   const t = String(texto||"").toUpperCase();
-  if(/EMB\s?\d/.test(t)) return "Francia";
   const m = t.match(/(?:^|[^A-Z])([A-Z]{2})\s?\d/);
   return (m && EMB[m[1]]) || null;
 }
@@ -357,7 +356,7 @@ function paisDeTags(tags){
 
 async function buscarProducto(codigo){
   const bases = ["openfoodfacts","openbeautyfacts","openproductsfacts"];
-  const campos="product_name,brands,manufacturing_places,manufacturing_places_tags,origins,origins_tags,labels_tags,emb_codes";
+  const campos="product_name,abbreviated_product_name,generic_name,brands,quantity,product_quantity,product_quantity_unit,categories,manufacturing_places,manufacturing_places_tags,origins,origins_tags,origin,labels,labels_tags,emb_codes,emb_codes_tags,packaging_text";
   const res = await Promise.all(bases.map(async b => {
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), 7000);
@@ -373,12 +372,17 @@ async function buscarProducto(codigo){
 
   const ps = res.filter(Boolean);
   const campo = c => ps.map(p => p[c]).find(v => v && (!Array.isArray(v) || v.length)) || "";
-  const nombre = campo("product_name");
+  const nombre = campo("product_name") || campo("abbreviated_product_name");
+  const marca = campo("brands");
+  const denominacion = campo("generic_name");
+  const cantidad = campo("quantity");
+  const categoria = campo("categories");
   const fab = campo("manufacturing_places");
   const fabTags = campo("manufacturing_places_tags");
   const labels = campo("labels_tags");
-  const ori = campo("origins");
+  const ori = campo("origins") || campo("origin");
   const emb = campo("emb_codes");
+  const envase = campo("packaging_text");
 
   // SOLO consideramos fabricación cuando la base de datos tiene un dato explícito
   // de manufacturing_places / manufacturing_places_tags o una etiqueta made-in.
@@ -389,7 +393,7 @@ async function buscarProducto(codigo){
 
   let envasado = null;
   if((p = deEmb(emb))) envasado = {pais:p, fuente:"Open Food Facts · código de envasador"};
-  return {nombre, fab, ori, emb, prod, envasado};
+  return {nombre, marca, denominacion, cantidad, categoria, fab, ori, emb, envase, prod, envasado};
 }
 
 // País guardado en el móvil para un código (por ejemplo, leído de la etiqueta)
@@ -439,10 +443,10 @@ function paisISO3(n){
 function limpiarGS1(txt){ return String(txt||"").replace(/\u001d/g,"|").replace(/[\u001c\u001e]/g,"|").trim(); }
 function extraerGS1(raw){
   const t=limpiarGS1(raw);
-  const out={raw:t, gtin:null, origen:null, inicial:null, proceso:null, completo:null, despiece:null, glnProduccion:null, es2D:false};
+  const out={raw:t, gtin:null, origen:null, inicial:null, es2D:false};
   // GS1 Digital Link: https://dominio/.../01/GTIN...?422=724&424=156 etc.
   const mG=t.match(/(?:[?&]|\/)01[=\/]?(\d{14})(?:[&/]|$)/); if(mG) out.gtin=mG[1].replace(/^0+/,'')||mG[1];
-  const pairs=[["422","origen"],["423","inicial"],["424","proceso"],["425","despiece"],["426","completo"]];
+  const pairs=[["422","origen"],["423","inicial"]];
   for(const [ai,key] of pairs){
     const re=new RegExp("(?:[?&]|\\\\|\\(|^)"+ai+"[=]?(\\d{3})");
     const m=t.match(re); if(m) out[key]=paisISO3(m[1]) || "Código ISO "+m[1];
@@ -454,8 +458,7 @@ function extraerGS1(raw){
     const re=new RegExp("(?:\\("+ai+"\\)|(?:^|[|])"+ai+")(\\d{3})");
     const m=t.match(re); if(m) out[key]=paisISO3(m[1]) || "Código ISO "+m[1];
   }
-  const m416b=t.match(/(?:\(416\)|(?:^|[|])416)(\d{13})/); if(m416b) out.glnProduccion=m416b[1];
-  out.es2D=!!(out.origen||out.inicial||out.proceso||out.completo||out.despiece||out.glnProduccion||/^(https?:\/\/)/i.test(t));
+  out.es2D=!!(out.origen||out.inicial||/^(https?:\/\/)/i.test(t));
   return out;
 }
 function pintarGS1(raw){
@@ -464,11 +467,7 @@ function pintarGS1(raw){
   if(d.gtin) h+="🔢 <b>GTIN:</b> "+esc(d.gtin)+"<br>";
   if(d.origen) h+="🌍 <b>País de origen:</b> "+esc(d.origen)+"<br>";
   if(d.inicial) h+="🧪 <b>País de procesamiento inicial:</b> "+esc(d.inicial)+"<br>";
-  if(d.proceso) h+="🏭 <b>País de procesamiento:</b> "+esc(d.proceso)+"<br>";
-  if(d.completo) h+="🏗️ <b>País de toda la cadena de proceso:</b> "+esc(d.completo)+"<br>";
-  if(d.despiece) h+="🔪 <b>País de despiece:</b> "+esc(d.despiece)+"<br>";
-  if(d.glnProduccion) h+="📍 <b>GLN de localización de producción:</b> "+esc(d.glnProduccion)+"<br><small>El GLN identifica una localización; para convertirlo en país hay que consultarlo en un registro de ubicaciones.</small><br>";
-  if(!h && d.es2D) h="📦 <b>QR/DataMatrix GS1 detectado</b><br><small>Este código no contiene un país de origen/proceso que podamos mostrar directamente.</small>";
+  if(!h && d.es2D) h="📦 <b>QR/DataMatrix GS1 detectado</b><br><small>Este código no contiene datos de país que podamos mostrar directamente.</small>";
   box.innerHTML=h ? '<div style="padding:10px;background:#fff7d6;border-radius:10px;border:1px solid #e0c45c">'+h+'</div>' : '';
   return d;
 }
@@ -480,9 +479,14 @@ function pintar(){
   const tieneFabricacion=!!paisFab, desconocido=!paisPrefijo||paisPrefijo.startsWith("Desconocido");
   $("pais").textContent=desconocido?"🌍 País GS1 desconocido":bandera(paisPrefijo)+" "+paisPrefijo;
   let frase=""; cuadro.className="";
-  if(!desconocido){ frase=paisPrefijo==="España"?"¡Viva España!":(paisPrefijo==="Marruecos"?"¡No, no, no, Marruecos no!":"¡No!"); cuadro.className=paisPrefijo==="España"?"ok":"mal"; }
+  if(!desconocido){ frase=paisPrefijo==="España"?"¡Viva España!":(paisPrefijo==="Marruecos"?"¡No, no, no, Marruecos no!":""); cuadro.className=paisPrefijo==="Marruecos"?"mal":"ok"; }
   $("frase").textContent=frase;
-  let html=info.nombre?"<b>"+esc(info.nombre)+"</b><br>":"";
+  let html="";
+  if(info.nombre) html+="📦 <b>Producto:</b> "+esc(info.nombre)+"<br>";
+  if(info.marca) html+="🏷️ <b>Marca:</b> "+esc(info.marca)+"<br>";
+  if(info.denominacion) html+="📄 <b>Denominación:</b> "+esc(info.denominacion)+"<br>";
+  if(info.cantidad) html+="⚖️ <b>Cantidad:</b> "+esc(info.cantidad)+"<br>";
+  if(info.categoria) html+="🗂️ <b>Categoría:</b> "+esc(info.categoria)+"<br>";
   if(tieneFabricacion){
     const mismo=norm(paisPrefijo)===norm(paisFab);
     if(!mismo){
@@ -497,7 +501,8 @@ function pintar(){
     $("fabricadoEn").textContent="🏭 Fabricación: no disponible";
   }
   if(info.fab) html+="<br>📍 Lugar registrado: "+esc(info.fab);
-  if(info.ori) html+="<br>🌾 Origen declarado: "+esc(info.ori);
+  if(info.ori) html+="<br>🌍 <b>Origen declarado:</b> "+esc(info.ori);
+  if(info.envase) html+="<br>📦 <b>Envase:</b> "+esc(info.envase);
   if(info.envasado) html+="<br>📦 <b>País asociado al código de envasador: "+esc(info.envasado.pais)+"</b> <small>("+esc(info.envasado.fuente)+")</small>";
   $("fabrica").innerHTML=html;
   if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia();
