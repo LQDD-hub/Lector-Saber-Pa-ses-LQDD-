@@ -332,15 +332,15 @@ function pintar(){
   const {codigo, prefijo, info} = actual;
   const cuadro = $("resultado");
   const confirmado = !!info.prod;
-  const pais = confirmado ? info.prod.pais : prefijo;
+  const pais = confirmado ? (info.prod.pais === "España / Andorra" ? "España" : info.prod.pais) : (prefijo === "España / Andorra" ? "España" : prefijo);
   const desconocido = !confirmado && prefijo.startsWith("Desconocido");
-  const nombre = pais.split(" / ")[0];
+  const nombre = pais === "España / Andorra" ? "España" : pais.split(" / ")[0];
 
   $("pais").textContent = desconocido ? "🌍 País desconocido" : bandera(pais) + " " + pais;
   let frase = "";
   cuadro.className = "";
   if(!desconocido){
-    frase = pais === "España" ? "¡Viva España!" : (pais === "Marruecos" ? "¡No, no, no, no, no!" : "¡No!");
+    frase = pais === "España" ? "¡Viva España!" : (pais === "Marruecos" ? "¡NO, NO, NO, NO! ¡MARRUECOS NO!" : "¡No!");
     cuadro.className = pais === "España" ? "ok" : "mal";
   }
   $("frase").textContent = frase;
