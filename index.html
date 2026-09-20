@@ -29,6 +29,10 @@
   .item{background:#fff;border-radius:10px;padding:10px 12px;margin-top:6px;font-size:.95rem}
   .item small{display:block}
   #borrar{background:#6b4e00;color:#fff;padding:8px;font-size:.9rem}
+  #leer{background:#7a0f14;color:#F1BF00;margin-top:14px;display:none}
+  #estadoLeer{margin-top:8px;font-size:.95rem}
+  #det{margin-top:8px;text-align:left;font-size:.8rem;display:none}
+  #det pre{white-space:pre-wrap;word-break:break-word;background:#f6f6f6;border-radius:8px;padding:8px;max-height:160px;overflow:auto;margin:6px 0 0}
 </style>
 </head>
 <body>
@@ -48,6 +52,10 @@
   <div id="pais"></div>
   <div id="fabrica" style="margin:10px 0;font-size:1.1rem"></div>
   <small id="origen"></small>
+  <button id="leer">📖 Leer la etiqueta con la cámara</button>
+  <div id="estadoLeer"></div>
+  <details id="det"><summary>Ver el texto leído</summary><pre id="textoLeido"></pre></details>
+  <input type="file" id="foto" accept="image/*" capture="environment" hidden>
 </div>
 
 <h2>🕘 Historial</h2>
@@ -55,6 +63,7 @@
 <button id="borrar">Borrar historial</button>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script>
 // [desde, hasta, país] — prefijos GS1 de 3 dígitos
 const R = [
@@ -84,6 +93,7 @@ const R = [
 ];
 
 const ISO = {"EE. UU. / Canadá":"US","EE. UU.":"US","Francia":"FR","Bulgaria":"BG","Eslovenia":"SI","Croacia":"HR","Bosnia y Herzegovina":"BA","Alemania":"DE","Japón":"JP","Rusia":"RU","Kirguistán":"KG","Taiwán":"TW","Estonia":"EE","Letonia":"LV","Azerbaiyán":"AZ","Lituania":"LT","Uzbekistán":"UZ","Sri Lanka":"LK","Filipinas":"PH","Bielorrusia":"BY","Ucrania":"UA","Moldavia":"MD","Armenia":"AM","Georgia":"GE","Kazajistán":"KZ","Hong Kong":"HK","Reino Unido":"GB","Grecia":"GR","Líbano":"LB","Chipre":"CY","Albania":"AL","Macedonia del Norte":"MK","Malta":"MT","Irlanda":"IE","Bélgica / Luxemburgo":"BE","Portugal":"PT","Islandia":"IS","Dinamarca":"DK","Polonia":"PL","Rumanía":"RO","Hungría":"HU","Sudáfrica":"ZA","Ghana":"GH","Baréin":"BH","Mauricio":"MU","Marruecos":"MA","Argelia":"DZ","Kenia":"KE","Costa de Marfil":"CI","Túnez":"TN","Siria":"SY","Egipto":"EG","Libia":"LY","Jordania":"JO","Irán":"IR","Kuwait":"KW","Arabia Saudí":"SA","Emiratos Árabes Unidos":"AE","Finlandia":"FI","China":"CN","Noruega":"NO","Israel":"IL","Suecia":"SE","Guatemala":"GT","El Salvador":"SV","Honduras":"HN","Nicaragua":"NI","Costa Rica":"CR","Panamá":"PA","República Dominicana":"DO","México":"MX","Canadá":"CA","Venezuela":"VE","Suiza":"CH","Colombia":"CO","Uruguay":"UY","Perú":"PE","Bolivia":"BO","Argentina":"AR","Chile":"CL","Paraguay":"PY","Ecuador":"EC","Brasil":"BR","Italia":"IT","España":"ES","Cuba":"CU","Eslovaquia":"SK","Chequia":"CZ","Serbia":"RS","Mongolia":"MN","Corea del Norte":"KP","Turquía":"TR","Países Bajos":"NL","Corea del Sur":"KR","Camboya":"KH","Tailandia":"TH","Singapur":"SG","India":"IN","Vietnam":"VN","Pakistán":"PK","Indonesia":"ID","Austria":"AT","Australia":"AU","Nueva Zelanda":"NZ","Malasia":"MY","Macao":"MO"};
+Object.assign(ISO, {"Bélgica":"BE","Luxemburgo":"LU","Bangladesh":"BD","Myanmar":"MM","Nepal":"NP","Etiopía":"ET","Unión Europea":"EU"});
 function bandera(nombre){
   const c = ISO[nombre];
   return c ? String.fromCodePoint(...[...c].map(x => 127397 + x.charCodeAt(0))) : "🌍";
@@ -100,7 +110,7 @@ function guardar(codigo, pais, fab){
 function pintarHist(){
   const h = cargarHist();
   document.getElementById("hist").innerHTML = h.length
-    ? h.map(x => '<div class="item">'+bandera(x.pais)+' <b>'+x.pais+'</b>'+(x.fab?' · 🏭 '+x.fab:'')+'<small>'+x.codigo+' · '+x.fecha+'</small></div>').join("")
+    ? h.map(x => '<div class="item">'+bandera(x.pais)+' <b>'+x.pais+'</b>'+(x.fab?(x.fab.indexOf('según')===0?' · 🏷️ ':' · 🏭 ')+x.fab:'')+'<small>'+x.codigo+' · '+x.fecha+'</small></div>').join("")
     : '<small>Aún no has escaneado nada.</small>';
 }
 document.getElementById("borrar").onclick = () => { try{ localStorage.removeItem("hist"); }catch(e){} pintarHist(); };
@@ -141,7 +151,7 @@ const ALIAS = [
  ["Bélgica",["belgica","belgium","belgique"]],
  ["Polonia",["polonia","poland","pologne"]],
  ["Marruecos",["marruecos","morocco","maroc"]],
- ["China",["china"]],
+ ["China",["china","prc","p.r.c"]],
  ["Turquía",["turquia","turkey","turkiye"]],
  ["EE. UU.",["estados unidos","united states","usa","ee. uu","ee.uu"]],
  ["México",["mexico"]],
@@ -164,7 +174,73 @@ const ALIAS = [
  ["Hungría",["hungria","hungary"]],
  ["Egipto",["egipto","egypt"]],
  ["Indonesia",["indonesia"]],
- ["Corea del Sur",["corea del sur","south korea"]]
+ ["Corea del Sur",["corea del sur","south korea"]],
+ ["Corea del Norte",["corea del norte","north korea"]],
+ ["Rusia",["rusia","russia"]],
+ ["Ucrania",["ucrania","ukraine"]],
+ ["Bulgaria",["bulgaria"]],
+ ["Croacia",["croacia","croatia"]],
+ ["Eslovenia",["eslovenia","slovenia"]],
+ ["Eslovaquia",["eslovaquia","slovakia"]],
+ ["Chequia",["chequia","republica checa","czech republic","czechia"]],
+ ["Serbia",["serbia"]],
+ ["Finlandia",["finlandia","finland"]],
+ ["Noruega",["noruega","norway"]],
+ ["Lituania",["lituania","lithuania"]],
+ ["Letonia",["letonia","latvia"]],
+ ["Estonia",["estonia"]],
+ ["Luxemburgo",["luxemburgo","luxembourg"]],
+ ["Islandia",["islandia","iceland"]],
+ ["Malta",["malta"]],
+ ["Chipre",["chipre","cyprus"]],
+ ["Albania",["albania"]],
+ ["Bosnia y Herzegovina",["bosnia"]],
+ ["Macedonia del Norte",["macedonia"]],
+ ["Moldavia",["moldavia","moldova"]],
+ ["Bielorrusia",["bielorrusia","belarus"]],
+ ["Georgia",["georgia"]],
+ ["Armenia",["armenia"]],
+ ["Kazajistán",["kazajistan","kazakhstan"]],
+ ["Canadá",["canada"]],
+ ["Australia",["australia"]],
+ ["Nueva Zelanda",["nueva zelanda","new zealand"]],
+ ["Sudáfrica",["sudafrica","south africa"]],
+ ["Túnez",["tunez","tunisia","tunisie"]],
+ ["Argelia",["argelia","algeria","algerie"]],
+ ["Kenia",["kenia","kenya"]],
+ ["Ghana",["ghana"]],
+ ["Etiopía",["etiopia","ethiopia"]],
+ ["Israel",["israel"]],
+ ["Líbano",["libano","lebanon"]],
+ ["Jordania",["jordania","jordan"]],
+ ["Irán",["iran"]],
+ ["Arabia Saudí",["arabia saudi","arabia saudita","saudi arabia"]],
+ ["Emiratos Árabes Unidos",["emiratos arabes","united arab emirates","uae"]],
+ ["Taiwán",["taiwan"]],
+ ["Hong Kong",["hong kong"]],
+ ["Filipinas",["filipinas","philippines"]],
+ ["Malasia",["malasia","malaysia"]],
+ ["Singapur",["singapur","singapore"]],
+ ["Camboya",["camboya","cambodia"]],
+ ["Myanmar",["myanmar","birmania"]],
+ ["Bangladesh",["bangladesh"]],
+ ["Pakistán",["pakistan"]],
+ ["Sri Lanka",["sri lanka"]],
+ ["Nepal",["nepal"]],
+ ["Uruguay",["uruguay"]],
+ ["Paraguay",["paraguay"]],
+ ["Bolivia",["bolivia"]],
+ ["Ecuador",["ecuador"]],
+ ["Venezuela",["venezuela"]],
+ ["Cuba",["cuba"]],
+ ["República Dominicana",["republica dominicana","dominican republic"]],
+ ["Costa Rica",["costa rica"]],
+ ["Panamá",["panama"]],
+ ["Guatemala",["guatemala"]],
+ ["El Salvador",["el salvador"]],
+ ["Honduras",["honduras"]],
+ ["Nicaragua",["nicaragua"]],
+ ["Unión Europea",["union europea","european union","u.e.","ue","eu"]]
 ];
 const EMB = {AT:"Austria",BE:"Bélgica",BG:"Bulgaria",CY:"Chipre",CZ:"Chequia",DE:"Alemania",DK:"Dinamarca",EE:"Estonia",ES:"España",FI:"Finlandia",FR:"Francia",GR:"Grecia",HR:"Croacia",HU:"Hungría",IE:"Irlanda",IT:"Italia",LT:"Lituania",LU:"Bélgica / Luxemburgo",LV:"Letonia",MT:"Malta",NL:"Países Bajos",PL:"Polonia",PT:"Portugal",RO:"Rumanía",SE:"Suecia",SI:"Eslovenia",SK:"Eslovaquia",GB:"Reino Unido",UK:"Reino Unido"};
 const norm = t => String(t||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
@@ -220,14 +296,22 @@ async function buscarProducto(codigo){
   return {nombre, fab, ori, prod};
 }
 
+// País guardado en el móvil para un código (por ejemplo, leído de la etiqueta)
+function cargarFab(c){ try{ return JSON.parse(localStorage.getItem("fab_"+c)||"null"); }catch(e){ return null; } }
+function guardarFab(c,p){ try{ localStorage.setItem("fab_"+c, JSON.stringify(p)); }catch(e){} }
+
+let actual = null; // {codigo, prefijo, info}
+const $ = id => document.getElementById(id);
+
 async function mostrar(codigo){
-  const $ = id => document.getElementById(id);
   const prefijo = paisDe(codigo);
   const cuadro = $("resultado");
   cuadro.style.display = "block";
   cuadro.className = "";
+  actual = null;
   $("codigo").textContent = "Código: " + codigo;
   $("frase").textContent = ""; $("fabrica").textContent = ""; $("origen").textContent = "";
+  $("estadoLeer").textContent = ""; $("det").style.display = "none"; $("leer").style.display = "none";
   if(!prefijo){
     $("pais").textContent = "Código no válido";
     hablar("Código no válido");
@@ -235,6 +319,16 @@ async function mostrar(codigo){
   }
   $("pais").textContent = "🔎 Buscando dónde se fabricó...";
   const info = await buscarProducto(codigo);
+  const g = cargarFab(codigo);
+  if(g) info.prod = g; // lo que leíste tú en la etiqueta manda
+  actual = {codigo, prefijo, info};
+  $("leer").style.display = "block";
+  pintar();
+}
+
+function pintar(){
+  const {codigo, prefijo, info} = actual;
+  const cuadro = $("resultado");
   const confirmado = !!info.prod;
   const pais = confirmado ? info.prod.pais : prefijo;
   const desconocido = !confirmado && prefijo.startsWith("Desconocido");
@@ -242,6 +336,7 @@ async function mostrar(codigo){
 
   $("pais").textContent = desconocido ? "🌍 País desconocido" : bandera(pais) + " " + pais;
   let frase = "";
+  cuadro.className = "";
   if(!desconocido){
     frase = pais === "España" ? "¡Viva España!" : (pais === "Marruecos" ? "¡No, no, no, no, no!" : "¡No!");
     cuadro.className = pais === "España" ? "ok" : "mal";
@@ -260,6 +355,90 @@ async function mostrar(codigo){
 
   hablar((frase ? frase + " " : "") + detalle);
   guardar(codigo, desconocido ? "Desconocido" : pais, confirmado ? "producido en " + nombre : "según el código");
+}
+
+// ---------- Leer la etiqueta con la cámara (OCR) ----------
+const PISTAS = [
+ /(?:fabricad[oa]s?|hech[oa]s?|elaborad[oa]s?|producid[oa]s?|envasad[oa]s?|manufacturad[oa]s?|ensamblad[oa]s?|fabricacion|produccion)\s*(?:en|:)\s*/g,
+ /(?:made|manufactured|produced|assembled|packed|printed)\s+in\s*/g,
+ /(?:product|producto|produit|prodotto)\s+(?:of|de|do)\s*/g,
+ /(?:fabrique|assemble|emballe|prodotto|hergestellt|fabricado)\s+(?:en|in|na)\s*/g,
+ /(?:pais\s+de\s+origen|country\s+of\s+origin|origen|origin|origine)\s*:?\s*/g
+];
+function paisDeEtiqueta(texto){
+  const t = norm(texto).replace(/\s+/g," ");
+  for(const re of PISTAS){
+    re.lastIndex = 0;
+    let m;
+    while((m = re.exec(t))){
+      const trozo = t.slice(m.index + m[0].length, m.index + m[0].length + 30);
+      const p = detectar(trozo);
+      if(p) return {pais:p, fuente:"leído en la etiqueta", cita:m[0].trim()};
+      if(m[0].length === 0) re.lastIndex++;
+    }
+  }
+  const raw = String(texto||"").toUpperCase();
+  const e = raw.match(/\b([A-Z]{2})\s?\d{1,2}[.,]\d{2,3}[.,\d]*\s*\/?\s*[A-Z]{0,2}\s*CE\b/);
+  if(e && EMB[e[1]]) return {pais:EMB[e[1]], fuente:"código de envasador leído en la etiqueta", cita:e[0]};
+  const f = raw.match(/\bEMB\s?\d{4,}/);
+  if(f) return {pais:"Francia", fuente:"código de envasador leído en la etiqueta", cita:f[0]};
+  return null;
+}
+
+// Reduce la foto y la pasa a blanco y negro con más contraste (lee mejor y va más rápido)
+function aCanvas(file){
+  return new Promise((ok, ko) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 2000 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      const x = c.getContext("2d");
+      try{ x.filter = "grayscale(1) contrast(1.4)"; }catch(e){}
+      x.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      ok(c);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); ko(new Error("foto")); };
+    img.src = url;
+  });
+}
+
+async function leerFoto(file){
+  const est = $("estadoLeer");
+  est.textContent = "⏳ Preparando el lector (la primera vez tarda un poco)...";
+  $("det").style.display = "none";
+  let worker;
+  try{
+    if(typeof Tesseract === "undefined") throw new Error("sin lector");
+    const c = await aCanvas(file);
+    worker = await Tesseract.createWorker("spa+eng", 1, {
+      logger: m => {
+        if(m.status === "recognizing text") est.textContent = "🔍 Leyendo la etiqueta... " + Math.round(m.progress * 100) + " %";
+      }
+    });
+    const r = await worker.recognize(c);
+    const texto = (r.data && r.data.text) || "";
+    $("textoLeido").textContent = texto.trim().slice(0, 1500) || "(no se ha leído nada)";
+    $("det").style.display = "block";
+    const h = paisDeEtiqueta(texto);
+    if(h){
+      est.innerHTML = "✅ Leído en la etiqueta: «" + esc(h.cita) + "» → <b>" + esc(h.pais) + "</b>";
+      if(actual){
+        const prod = {pais:h.pais, fuente:h.fuente};
+        guardarFab(actual.codigo, prod);
+        actual.info.prod = prod;
+        pintar();
+      }
+    }else{
+      est.textContent = "😕 No he encontrado «hecho en…» ni «fabricado en…» en la foto. Acércate a la parte donde pone el país, con buena luz y sin brillos, y prueba otra vez.";
+    }
+  }catch(e){
+    est.textContent = "⚠️ No se pudo leer la foto. Hace falta internet la primera vez para descargar el lector.";
+  }finally{
+    try{ if(worker) await worker.terminate(); }catch(e){}
+  }
 }
 
 let scanner, activo = false, ultimo = "";
@@ -300,6 +479,8 @@ async function iniciar(){
 btn.onclick = () => activo ? parar() : iniciar();
 window.addEventListener("load", iniciar);
 document.getElementById("ok").onclick = () => mostrar(document.getElementById("manual").value);
+$("leer").onclick = async () => { if(activo) await parar(); $("foto").click(); };
+$("foto").onchange = e => { const f = e.target.files[0]; e.target.value = ""; if(f) leerFoto(f); };
 </script>
 </body>
 </html>
