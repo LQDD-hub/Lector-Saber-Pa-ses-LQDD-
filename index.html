@@ -30,6 +30,7 @@
   .item small{display:block}
   #borrar{background:#6b4e00;color:#fff;padding:8px;font-size:.9rem}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
 <header class="cab">
@@ -38,6 +39,8 @@
 </header>
 <div id="lector"></div>
 <button id="btn">Activar cámara</button>
+<button id="etiquetaBtn" type="button" style="background:#7a0f14;color:#F1BF00">📷 Leer “Made in”</button>
+<input type="file" id="etiquetaFoto" accept="image/*" capture="environment" hidden>
 <button id="vozBtn" type="button" style="background:#6b4e00;color:#fff">🔊 Voz: ACTIVADA</button>
 <div class="fila">
   <input id="manual" inputmode="numeric" placeholder="O escribe el código">
@@ -47,6 +50,7 @@
   <small id="codigo"></small>
   <div id="frase" style="font-size:1.4rem;font-weight:bold;margin:8px 0"></div>
   <div id="pais"></div>
+  <div id="fabricadoEn" style="margin:10px 0;font-size:1.15rem;font-weight:bold"></div>
   <div id="fabrica" style="margin:10px 0;font-size:1.1rem"></div>
   <small id="origen"></small>
    <div style="margin-top:10px;font-size:.78rem;color:#5a4200">
@@ -376,7 +380,7 @@ async function mostrar(codigo){
   cuadro.className = "";
   actual = null;
   $("codigo").textContent = "Código: " + codigo;
-  $("frase").textContent = ""; $("fabrica").textContent = ""; $("origen").textContent = "";
+  $("frase").textContent = ""; $("fabrica").textContent = ""; $("origen").textContent = ""; if($("fabricadoEn")) $("fabricadoEn").textContent = "";
   if(!prefijo){
     $("pais").textContent = "Código no válido";
     hablar("Código no válido");
@@ -468,6 +472,28 @@ if(vozBtn){
       try{ speechSynthesis.cancel(); }catch(e){}
     }
     actualizarBotonVoz();
+  };
+}
+
+
+const etiquetaBtn = document.getElementById("etiquetaBtn");
+const etiquetaFoto = document.getElementById("etiquetaFoto");
+
+if(etiquetaBtn && etiquetaFoto){
+  etiquetaBtn.onclick = () => etiquetaFoto.click();
+  etiquetaFoto.onchange = async e => {
+    const f = e.target.files[0];
+    e.target.value = "";
+    if(!f) return;
+    etiquetaBtn.textContent = "⏳ Leyendo Made in...";
+    const paisMade = await leerMadeInDeImagen(f);
+    if($("fabricadoEn")){
+      $("fabricadoEn").textContent = paisMade
+        ? "🏭 Fabricado en " + paisMade
+        : "ℹ️ No he encontrado «Made in» / «Fabricado en» en la etiqueta";
+    }
+    etiquetaBtn.textContent = "📷 Leer “Made in”";
+    if(paisMade) hablar("Fabricado en " + paisMade);
   };
 }
 
