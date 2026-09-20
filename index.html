@@ -29,10 +29,6 @@
   .item{background:#fff;border-radius:10px;padding:10px 12px;margin-top:6px;font-size:.95rem}
   .item small{display:block}
   #borrar{background:#6b4e00;color:#fff;padding:8px;font-size:.9rem}
-  #leer{background:#7a0f14;color:#F1BF00;margin-top:14px;display:none}
-  #estadoLeer{margin-top:8px;font-size:.95rem}
-  #det{margin-top:8px;text-align:left;font-size:.8rem;display:none}
-  #det pre{white-space:pre-wrap;word-break:break-word;background:#f6f6f6;border-radius:8px;padding:8px;max-height:160px;overflow:auto;margin:6px 0 0}
 </style>
 </head>
 <body>
@@ -52,10 +48,9 @@
   <div id="pais"></div>
   <div id="fabrica" style="margin:10px 0;font-size:1.1rem"></div>
   <small id="origen"></small>
-  <button id="leer">📖 Leer la etiqueta con la cámara</button>
-  <div id="estadoLeer"></div>
-  <details id="det"><summary>Ver el texto leído</summary><pre id="textoLeido"></pre></details>
-  <input type="file" id="foto" accept="image/*" capture="environment" hidden>
+   <div style="margin-top:10px;font-size:.78rem;color:#5a4200">
+     ℹ️ El prefijo GS1 identifica dónde se asignó el número, no necesariamente dónde se fabricó.
+   </div>
 </div>
 
 <h2>🕘 Historial</h2>
@@ -63,33 +58,42 @@
 <button id="borrar">Borrar historial</button>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script>
 // [desde, hasta, país] — prefijos GS1 de 3 dígitos
 const R = [
-[0,19,"EE. UU. / Canadá"],[30,39,"EE. UU."],[60,139,"EE. UU. / Canadá"],
-[300,379,"Francia"],[380,380,"Bulgaria"],[383,383,"Eslovenia"],[385,385,"Croacia"],[387,387,"Bosnia y Herzegovina"],
-[400,440,"Alemania"],[450,459,"Japón"],[460,469,"Rusia"],[470,470,"Kirguistán"],[471,471,"Taiwán"],
-[474,474,"Estonia"],[475,475,"Letonia"],[476,476,"Azerbaiyán"],[477,477,"Lituania"],[478,478,"Uzbekistán"],
-[479,479,"Sri Lanka"],[480,480,"Filipinas"],[481,481,"Bielorrusia"],[482,482,"Ucrania"],[484,484,"Moldavia"],
-[485,485,"Armenia"],[486,486,"Georgia"],[487,487,"Kazajistán"],[489,489,"Hong Kong"],[490,499,"Japón"],
-[500,509,"Reino Unido"],[520,521,"Grecia"],[528,528,"Líbano"],[529,529,"Chipre"],[530,530,"Albania"],
-[531,531,"Macedonia del Norte"],[535,535,"Malta"],[539,539,"Irlanda"],[540,549,"Bélgica / Luxemburgo"],
-[560,560,"Portugal"],[569,569,"Islandia"],[570,579,"Dinamarca"],[590,590,"Polonia"],[594,594,"Rumanía"],
-[599,599,"Hungría"],[600,601,"Sudáfrica"],[603,603,"Ghana"],[608,608,"Baréin"],[609,609,"Mauricio"],
-[611,611,"Marruecos"],[613,613,"Argelia"],[616,616,"Kenia"],[618,618,"Costa de Marfil"],[619,619,"Túnez"],
-[621,621,"Siria"],[622,622,"Egipto"],[624,624,"Libia"],[625,625,"Jordania"],[626,626,"Irán"],
-[627,627,"Kuwait"],[628,628,"Arabia Saudí"],[629,629,"Emiratos Árabes Unidos"],[640,649,"Finlandia"],
-[690,699,"China"],[700,709,"Noruega"],[729,729,"Israel"],[730,739,"Suecia"],[740,740,"Guatemala"],
-[741,741,"El Salvador"],[742,742,"Honduras"],[743,743,"Nicaragua"],[744,744,"Costa Rica"],[745,745,"Panamá"],
-[746,746,"República Dominicana"],[750,750,"México"],[754,755,"Canadá"],[759,759,"Venezuela"],
-[760,769,"Suiza"],[770,771,"Colombia"],[773,773,"Uruguay"],[775,775,"Perú"],[777,777,"Bolivia"],
-[778,779,"Argentina"],[780,780,"Chile"],[784,784,"Paraguay"],[786,786,"Ecuador"],[789,790,"Brasil"],
-[800,839,"Italia"],[840,849,"España"],[850,850,"Cuba"],[858,858,"Eslovaquia"],[859,859,"Chequia"],
-[860,860,"Serbia"],[865,865,"Mongolia"],[867,867,"Corea del Norte"],[868,869,"Turquía"],
-[870,879,"Países Bajos"],[880,880,"Corea del Sur"],[884,884,"Camboya"],[885,885,"Tailandia"],
-[888,888,"Singapur"],[890,890,"India"],[893,893,"Vietnam"],[896,896,"Pakistán"],[899,899,"Indonesia"],
-[900,919,"Austria"],[930,939,"Australia"],[940,949,"Nueva Zelanda"],[955,955,"Malasia"],[958,958,"Macao"]
+  [1,19,"Estados Unidos"],[30,39,"Estados Unidos"],[60,139,"Estados Unidos"],
+  [300,379,"Francia / Mónaco"],[380,380,"Bulgaria"],[381,381,"Kosovo"],[383,383,"Eslovenia"],
+  [385,385,"Croacia"],[387,387,"Bosnia y Herzegovina"],[389,389,"Montenegro"],
+  [400,440,"Alemania"],[450,459,"Japón"],[460,469,"Rusia"],[470,470,"Kirguistán"],
+  [471,471,"Taiwán"],[474,474,"Estonia"],[475,475,"Letonia"],[476,476,"Azerbaiyán"],
+  [477,477,"Lituania"],[478,478,"Uzbekistán"],[479,479,"Sri Lanka"],[480,480,"Filipinas"],
+  [481,481,"Bielorrusia"],[482,482,"Ucrania"],[483,483,"Turkmenistán"],[484,484,"Moldavia"],
+  [485,485,"Armenia"],[486,486,"Georgia"],[487,487,"Kazajistán"],[488,488,"Tayikistán"],
+  [489,489,"Hong Kong"],[490,499,"Japón"],
+  [500,509,"Reino Unido"],[520,521,"Grecia"],[528,528,"Líbano"],[529,529,"Chipre"],
+  [530,530,"Albania"],[531,531,"Macedonia del Norte"],[535,535,"Malta"],[539,539,"Irlanda"],
+  [540,549,"Bélgica / Luxemburgo"],[560,560,"Portugal"],[569,569,"Islandia"],
+  [570,579,"Dinamarca"],[590,590,"Polonia"],[594,594,"Rumanía"],[599,599,"Hungría"],
+  [600,601,"Sudáfrica"],[603,603,"Ghana"],[604,604,"Senegal"],[605,605,"Uganda"],
+  [606,606,"Angola"],[607,607,"Omán"],[608,608,"Baréin"],[609,609,"Mauricio"],
+  [611,611,"Marruecos"],[613,613,"Argelia"],[615,615,"Nigeria"],[616,616,"Kenia"],
+  [617,617,"Camerún"],[618,618,"Costa de Marfil"],[619,619,"Túnez"],[620,620,"Tanzania"],
+  [621,621,"Siria"],[622,622,"Egipto"],[624,624,"Libia"],[625,625,"Jordania"],
+  [626,626,"Irán"],[627,627,"Kuwait"],[628,628,"Arabia Saudí"],[629,629,"Emiratos Árabes Unidos"],
+  [630,630,"Catar"],[631,631,"Namibia"],[632,632,"Ruanda"],[640,649,"Finlandia"],
+  [680,681,"China"],[690,699,"China"],[700,709,"Noruega"],[729,729,"Israel"],
+  [730,739,"Suecia"],[740,740,"Guatemala"],[741,741,"El Salvador"],[742,742,"Honduras"],
+  [743,743,"Nicaragua"],[744,744,"Costa Rica"],[745,745,"Panamá"],[746,746,"República Dominicana"],
+  [750,750,"México"],[754,755,"Canadá"],[759,759,"Venezuela"],[760,769,"Suiza / Liechtenstein"],
+  [770,771,"Colombia"],[773,773,"Uruguay"],[775,775,"Perú"],[777,777,"Bolivia"],
+  [778,779,"Argentina"],[780,780,"Chile"],[784,784,"Paraguay"],[786,786,"Ecuador"],
+  [789,790,"Brasil"],[800,839,"Italia / San Marino / Ciudad del Vaticano"],[840,849,"España / Andorra"],
+  [850,850,"Cuba"],[858,858,"Eslovaquia"],[859,859,"Chequia"],[860,860,"Serbia"],
+  [865,865,"Mongolia"],[867,867,"Corea del Norte"],[868,869,"Turquía"],
+  [870,879,"Países Bajos"],[880,881,"Corea del Sur"],[883,883,"Myanmar"],[884,884,"Camboya"],
+  [885,885,"Tailandia"],[888,888,"Singapur"],[890,890,"India"],[893,893,"Vietnam"],
+  [896,896,"Pakistán"],[899,899,"Indonesia"],[900,919,"Austria"],[930,939,"Australia"],
+  [940,949,"Nueva Zelanda"],[955,955,"Malasia"],[958,958,"Macao"]
 ];
 
 const ISO = {"EE. UU. / Canadá":"US","EE. UU.":"US","Francia":"FR","Bulgaria":"BG","Eslovenia":"SI","Croacia":"HR","Bosnia y Herzegovina":"BA","Alemania":"DE","Japón":"JP","Rusia":"RU","Kirguistán":"KG","Taiwán":"TW","Estonia":"EE","Letonia":"LV","Azerbaiyán":"AZ","Lituania":"LT","Uzbekistán":"UZ","Sri Lanka":"LK","Filipinas":"PH","Bielorrusia":"BY","Ucrania":"UA","Moldavia":"MD","Armenia":"AM","Georgia":"GE","Kazajistán":"KZ","Hong Kong":"HK","Reino Unido":"GB","Grecia":"GR","Líbano":"LB","Chipre":"CY","Albania":"AL","Macedonia del Norte":"MK","Malta":"MT","Irlanda":"IE","Bélgica / Luxemburgo":"BE","Portugal":"PT","Islandia":"IS","Dinamarca":"DK","Polonia":"PL","Rumanía":"RO","Hungría":"HU","Sudáfrica":"ZA","Ghana":"GH","Baréin":"BH","Mauricio":"MU","Marruecos":"MA","Argelia":"DZ","Kenia":"KE","Costa de Marfil":"CI","Túnez":"TN","Siria":"SY","Egipto":"EG","Libia":"LY","Jordania":"JO","Irán":"IR","Kuwait":"KW","Arabia Saudí":"SA","Emiratos Árabes Unidos":"AE","Finlandia":"FI","China":"CN","Noruega":"NO","Israel":"IL","Suecia":"SE","Guatemala":"GT","El Salvador":"SV","Honduras":"HN","Nicaragua":"NI","Costa Rica":"CR","Panamá":"PA","República Dominicana":"DO","México":"MX","Canadá":"CA","Venezuela":"VE","Suiza":"CH","Colombia":"CO","Uruguay":"UY","Perú":"PE","Bolivia":"BO","Argentina":"AR","Chile":"CL","Paraguay":"PY","Ecuador":"EC","Brasil":"BR","Italia":"IT","España":"ES","Cuba":"CU","Eslovaquia":"SK","Chequia":"CZ","Serbia":"RS","Mongolia":"MN","Corea del Norte":"KP","Turquía":"TR","Países Bajos":"NL","Corea del Sur":"KR","Camboya":"KH","Tailandia":"TH","Singapur":"SG","India":"IN","Vietnam":"VN","Pakistán":"PK","Indonesia":"ID","Austria":"AT","Australia":"AU","Nueva Zelanda":"NZ","Malasia":"MY","Macao":"MO"};
@@ -311,7 +315,6 @@ async function mostrar(codigo){
   actual = null;
   $("codigo").textContent = "Código: " + codigo;
   $("frase").textContent = ""; $("fabrica").textContent = ""; $("origen").textContent = "";
-  $("estadoLeer").textContent = ""; $("det").style.display = "none"; $("leer").style.display = "none";
   if(!prefijo){
     $("pais").textContent = "Código no válido";
     hablar("Código no válido");
@@ -322,7 +325,6 @@ async function mostrar(codigo){
   const g = cargarFab(codigo);
   if(g) info.prod = g; // lo que leíste tú en la etiqueta manda
   actual = {codigo, prefijo, info};
-  $("leer").style.display = "block";
   pintar();
 }
 
@@ -355,90 +357,6 @@ function pintar(){
 
   hablar((frase ? frase + " " : "") + detalle);
   guardar(codigo, desconocido ? "Desconocido" : pais, confirmado ? "producido en " + nombre : "según el código");
-}
-
-// ---------- Leer la etiqueta con la cámara (OCR) ----------
-const PISTAS = [
- /(?:fabricad[oa]s?|hech[oa]s?|elaborad[oa]s?|producid[oa]s?|envasad[oa]s?|manufacturad[oa]s?|ensamblad[oa]s?|fabricacion|produccion)\s*(?:en|:)\s*/g,
- /(?:made|manufactured|produced|assembled|packed|printed)\s+in\s*/g,
- /(?:product|producto|produit|prodotto)\s+(?:of|de|do)\s*/g,
- /(?:fabrique|assemble|emballe|prodotto|hergestellt|fabricado)\s+(?:en|in|na)\s*/g,
- /(?:pais\s+de\s+origen|country\s+of\s+origin|origen|origin|origine)\s*:?\s*/g
-];
-function paisDeEtiqueta(texto){
-  const t = norm(texto).replace(/\s+/g," ");
-  for(const re of PISTAS){
-    re.lastIndex = 0;
-    let m;
-    while((m = re.exec(t))){
-      const trozo = t.slice(m.index + m[0].length, m.index + m[0].length + 30);
-      const p = detectar(trozo);
-      if(p) return {pais:p, fuente:"leído en la etiqueta", cita:m[0].trim()};
-      if(m[0].length === 0) re.lastIndex++;
-    }
-  }
-  const raw = String(texto||"").toUpperCase();
-  const e = raw.match(/\b([A-Z]{2})\s?\d{1,2}[.,]\d{2,3}[.,\d]*\s*\/?\s*[A-Z]{0,2}\s*CE\b/);
-  if(e && EMB[e[1]]) return {pais:EMB[e[1]], fuente:"código de envasador leído en la etiqueta", cita:e[0]};
-  const f = raw.match(/\bEMB\s?\d{4,}/);
-  if(f) return {pais:"Francia", fuente:"código de envasador leído en la etiqueta", cita:f[0]};
-  return null;
-}
-
-// Reduce la foto y la pasa a blanco y negro con más contraste (lee mejor y va más rápido)
-function aCanvas(file){
-  return new Promise((ok, ko) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      const k = Math.min(1, 2000 / Math.max(img.width, img.height));
-      const c = document.createElement("canvas");
-      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
-      const x = c.getContext("2d");
-      try{ x.filter = "grayscale(1) contrast(1.4)"; }catch(e){}
-      x.drawImage(img, 0, 0, c.width, c.height);
-      URL.revokeObjectURL(url);
-      ok(c);
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); ko(new Error("foto")); };
-    img.src = url;
-  });
-}
-
-async function leerFoto(file){
-  const est = $("estadoLeer");
-  est.textContent = "⏳ Preparando el lector (la primera vez tarda un poco)...";
-  $("det").style.display = "none";
-  let worker;
-  try{
-    if(typeof Tesseract === "undefined") throw new Error("sin lector");
-    const c = await aCanvas(file);
-    worker = await Tesseract.createWorker("spa+eng", 1, {
-      logger: m => {
-        if(m.status === "recognizing text") est.textContent = "🔍 Leyendo la etiqueta... " + Math.round(m.progress * 100) + " %";
-      }
-    });
-    const r = await worker.recognize(c);
-    const texto = (r.data && r.data.text) || "";
-    $("textoLeido").textContent = texto.trim().slice(0, 1500) || "(no se ha leído nada)";
-    $("det").style.display = "block";
-    const h = paisDeEtiqueta(texto);
-    if(h){
-      est.innerHTML = "✅ Leído en la etiqueta: «" + esc(h.cita) + "» → <b>" + esc(h.pais) + "</b>";
-      if(actual){
-        const prod = {pais:h.pais, fuente:h.fuente};
-        guardarFab(actual.codigo, prod);
-        actual.info.prod = prod;
-        pintar();
-      }
-    }else{
-      est.textContent = "😕 No he encontrado «hecho en…» ni «fabricado en…» en la foto. Acércate a la parte donde pone el país, con buena luz y sin brillos, y prueba otra vez.";
-    }
-  }catch(e){
-    est.textContent = "⚠️ No se pudo leer la foto. Hace falta internet la primera vez para descargar el lector.";
-  }finally{
-    try{ if(worker) await worker.terminate(); }catch(e){}
-  }
 }
 
 let scanner, activo = false, ultimo = "";
@@ -479,8 +397,6 @@ async function iniciar(){
 btn.onclick = () => activo ? parar() : iniciar();
 window.addEventListener("load", iniciar);
 document.getElementById("ok").onclick = () => mostrar(document.getElementById("manual").value);
-$("leer").onclick = async () => { if(activo) await parar(); $("foto").click(); };
-$("foto").onchange = e => { const f = e.target.files[0]; e.target.value = ""; if(f) leerFoto(f); };
 </script>
 </body>
 </html>
