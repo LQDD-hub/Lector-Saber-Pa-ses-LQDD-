@@ -332,7 +332,6 @@ function detectar(texto){
 // Código de envasador/sanitario de la UE: "ES 10.02547/H CE", "FR 35.123.001 CE", "EMB 35123"
 function deEmb(texto){
   const t = String(texto||"").toUpperCase();
-  if(/EMB\s?\d/.test(t)) return "Francia";
   const m = t.match(/(?:^|[^A-Z])([A-Z]{2})\s?\d/);
   return (m && EMB[m[1]]) || null;
 }
@@ -357,40 +356,100 @@ function paisDeTags(tags){
 }
 
 async function buscarProducto(codigo){
-  const bases = ["openfoodfacts","openbeautyfacts","openproductsfacts"];
-  const campos="product_name,brands,manufacturing_places,manufacturing_places_tags,origins,origins_tags,labels_tags,emb_codes";
-  const res = await Promise.all(bases.map(async b => {
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 7000);
+  const bases = [
+    ["openfoodfacts","Open Food Facts"],
+    ["openproductsfacts","Open Products Facts"],
+    ["openbeautyfacts","Open Beauty Facts"]
+  ];
+  const campos="product_name,abbreviated_product_name,generic_name,brands,brands_tags,quantity,product_quantity,product_quantity_unit,categories,categories_tags,countries,countries_tags,manufacturing_places,manufacturing_places_tags,origins,origins_tags,origin,labels,labels_tags,emb_codes,emb_codes_tags,stores,stores_tags,packaging_text,description";
+
+  const resultados=[];
+  for(const [base,nombreBase] of bases){
+    const ac=new AbortController();
+    const timer=setTimeout(()=>ac.abort(),6500);
     try{
-      // v3 es la API actual recomendada por Open Food Facts.
-      const r = await fetch("https://world."+b+".org/api/v3/product/"+encodeURIComponent(codigo)+"?fields="+encodeURIComponent(campos), {signal: ac.signal});
-      if(!r.ok) return null;
-      const d = await r.json();
-      return d && d.product ? d.product : null;
-    }catch(e){ return null; }
-    finally{ clearTimeout(t); }
-  }));
+      const url="https://world."+base+".org/api/v3/product/"+encodeURIComponent(codigo)+"?fields="+encodeURIComponent(campos);
+      const r=await fetch(url,{signal:ac.signal});
+      if(r.ok){
+        const d=await r.json();
+        if(d && d.product) resultados.push({p:d.product,fuente:nombreBase});
+      }
+    }catch(e){}
+    finally{clearTimeout(timer);}
+  }
 
-  const ps = res.filter(Boolean);
-  const campo = c => ps.map(p => p[c]).find(v => v && (!Array.isArray(v) || v.length)) || "";
-  const nombre = campo("product_name");
-  const fab = campo("manufacturing_places");
-  const fabTags = campo("manufacturing_places_tags");
-  const labels = campo("labels_tags");
-  const ori = campo("origins");
-  const emb = campo("emb_codes");
+  // UPCitemdb: servicio gratuito Explorer, sin registro, con límite de uso.
+  // Lo consultamos después de las bases de Facts para no gastar una consulta gratuita innecesariamente.
+  let upc=null;
+  try{
+    const ac=new AbortController();
+    const timer=setTimeout(()=>ac.abort(),6500);
+    const r=await fetch("https://api.upcitemdb.com/prod/trial/lookup?upc="+encodeURIComponent(codigo),{
+      signal:ac.signal,
+      headers:{"Accept":"application/json"}
+    });
+    clearTimeout(timer);
+    if(r.ok){
+      const d=await r.json();
+      if(d && Array.isArray(d.items) && d.items[0]) upc=d.items[0];
+    }
+  }catch(e){}
 
-  // SOLO consideramos fabricación cuando la base de datos tiene un dato explícito
-  // de manufacturing_places / manufacturing_places_tags o una etiqueta made-in.
-  let prod = null, p;
-  if((p = detectar(fab))) prod = {pais:p, fuente:"Open Food Facts · lugar de fabricación"};
-  else if((p = paisDeTags(fabTags))) prod = {pais:p, fuente:"Open Food Facts · lugar de fabricación"};
-  else if((p = deEtiqueta(labels))) prod = {pais:p, fuente:"Open Food Facts · etiqueta de origen"};
+  // Elegimos el registro de Facts con más información útil, priorizando alimentación para productos alimentarios.
+  function score(p){
+    const keys=["product_name","generic_name","brands","quantity","categories","manufacturing_places","origins","origin","emb_codes","description","packaging_text"];
+    return keys.reduce((n,k)=>n+(p[k] ? (Array.isArray(p[k]) ? (p[k].length?1:0) : 1) : 0),0);
+  }
+  resultados.sort((a,b)=>score(b.p)-score(a.p));
+  const principal=resultados[0] || null;
+  const p=principal ? principal.p : {};
 
-  let envasado = null;
-  if((p = deEmb(emb))) envasado = {pais:p, fuente:"Open Food Facts · código de envasador"};
-  return {nombre, fab, ori, emb, prod, envasado};
+  const first=(...vals)=>vals.find(v=>v!==undefined && v!==null && String(v).trim()!=="") || "";
+  const arr=(...vals)=>vals.find(v=>Array.isArray(v)&&v.length) || [];
+  const join=v=>Array.isArray(v)?v.filter(Boolean).join(", "):String(v||"");
+
+  const nombre=first(p.product_name,p.abbreviated_product_name,upc&&upc.title);
+  const denominacion=first(p.generic_name,p.abbreviated_product_name);
+  const marca=first(p.brands,upc&&upc.brand);
+  const cantidad=first(p.quantity, p.product_quantity ? String(p.product_quantity)+((p.product_quantity_unit?" "+p.product_quantity_unit:"")) : "");
+  const categoria=first(p.categories,join(p.categories_tags));
+  const paisesVenta=first(p.countries,join(p.countries_tags));
+  const descripcion=first(p.description);
+  const embalaje=first(p.packaging_text);
+  const fab=first(p.manufacturing_places);
+  const fabTags=arr(p.manufacturing_places_tags);
+  const labels=arr(p.labels_tags);
+  const ori=first(p.origins,p.origin);
+  const emb=first(p.emb_codes);
+
+  let prod=null, pais=null;
+  if((pais=detectar(fab))) prod={pais,fuente:(principal?principal.fuente:"Open Food Facts")+" · lugar de fabricación"};
+  else if((pais=paisDeTags(fabTags))) prod={pais,fuente:(principal?principal.fuente:"Open Food Facts")+" · lugar de fabricación"};
+  else if((pais=deEtiqueta(labels))) prod={pais,fuente:(principal?principal.fuente:"Open Food Facts")+" · etiqueta made-in"};
+
+  let envasado=null;
+  if((pais=deEmb(emb))) envasado={pais,fuente:(principal?principal.fuente:"Open Food Facts")+" · código de envasador"};
+
+  return {
+    nombre, denominacion, marca, cantidad, categoria, paisesVenta, descripcion, embalaje,
+    fab, ori, emb, prod, envasado,
+    fuente: principal ? principal.fuente : (upc ? "UPCitemdb" : ""),
+    upc: upc ? {titulo:upc.title||"",marca:upc.brand||"",ean:upc.ean||"",gtin:upc.gtin||"",imagenes:Array.isArray(upc.images)?upc.images:[]} : null
+  };
+}
+
+async function consultarGS1Resolver(gtin){
+  // El resolver oficial es gratuito. Si el servidor permite CORS, intentamos leer el recurso.
+  // Si no lo permite, simplemente conservamos el enlace para que el usuario pueda abrirlo.
+  if(!gtin) return null;
+  const url="https://id.gs1.org/01/"+encodeURIComponent(String(gtin).padStart(14,"0"));
+  try{
+    const ac=new AbortController();
+    const timer=setTimeout(()=>ac.abort(),5000);
+    const r=await fetch(url,{redirect:"follow",signal:ac.signal});
+    clearTimeout(timer);
+    return {url,ok:r.ok,status:r.status,finalUrl:r.url};
+  }catch(e){ return {url,ok:false}; }
 }
 
 // País guardado en el móvil para un código (por ejemplo, leído de la etiqueta)
@@ -410,7 +469,10 @@ async function mostrar(codigo){
   $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("gs1Datos").innerHTML="";
   if(!prefijo){ $("pais").textContent="Código no válido"; hablar("Código no válido"); return; }
   $("pais").textContent="🔎 Consultando información del producto...";
-  const info=await buscarProducto(codigoProducto); actual={codigo:codigoProducto,prefijo,info,gs1Raw}; pintar();
+  const info=await buscarProducto(codigoProducto);
+  const resolver=await consultarGS1Resolver(gs1.gtin || codigoProducto);
+  info.gs1Resolver=resolver;
+  actual={codigo:codigoProducto,prefijo,info,gs1Raw}; pintar();
 }
 
 
@@ -440,23 +502,17 @@ function paisISO3(n){
 function limpiarGS1(txt){ return String(txt||"").replace(/\u001d/g,"|").replace(/[\u001c\u001e]/g,"|").trim(); }
 function extraerGS1(raw){
   const t=limpiarGS1(raw);
-  const out={raw:t, gtin:null, origen:null, inicial:null, proceso:null, completo:null, despiece:null, glnProduccion:null, es2D:false};
-  // GS1 Digital Link: https://dominio/.../01/GTIN...?422=724&424=156 etc.
-  const mG=t.match(/(?:[?&]|\/)01[=\/]?(\d{14})(?:[&/]|$)/); if(mG) out.gtin=mG[1].replace(/^0+/,'')||mG[1];
-  const pairs=[["422","origen"],["423","inicial"],["424","proceso"],["425","despiece"],["426","completo"]];
-  for(const [ai,key] of pairs){
-    const re=new RegExp("(?:[?&]|\\\\|\\(|^)"+ai+"[=]?(\\d{3})");
-    const m=t.match(re); if(m) out[key]=paisISO3(m[1]) || "Código ISO "+m[1];
-  }
-  const m416=t.match(/(?:[?&]|\||\()416[=]?(\d{13})/); if(m416) out.glnProduccion=m416[1];
-  // GS1 element string: (422)724, (423)724..., (424)156, (426)724, o sin paréntesis con GS.
-  for(const [ai,key] of pairs){
-    if(out[key]) continue;
-    const re=new RegExp("(?:\\("+ai+"\\)|(?:^|[|])"+ai+")(\\d{3})");
-    const m=t.match(re); if(m) out[key]=paisISO3(m[1]) || "Código ISO "+m[1];
-  }
-  const m416b=t.match(/(?:\(416\)|(?:^|[|])416)(\d{13})/); if(m416b) out.glnProduccion=m416b[1];
-  out.es2D=!!(out.origen||out.inicial||out.proceso||out.completo||out.despiece||out.glnProduccion||/^(https?:\/\/)/i.test(t));
+  const out={raw:t,gtin:null,origen:null,inicial:null,es2D:false};
+  const mG=t.match(/(?:[?&]|\/)01[=\/]?(\d{14})(?:[&/]|$)/);
+  if(mG) out.gtin=mG[1].replace(/^0+/,'')||mG[1];
+  const leer=(ai)=>{
+    let m=t.match(new RegExp("(?:[?&]|\\\\|\\(|^)"+ai+"[=]?(\\d{3})"));
+    if(!m) m=t.match(new RegExp("(?:\\("+ai+"\\)|(?:^|[|])"+ai+")(\\d{3})"));
+    return m ? (paisISO3(m[1]) || "Código ISO "+m[1]) : null;
+  };
+  out.origen=leer("422");
+  out.inicial=leer("423");
+  out.es2D=!!(out.origen||out.inicial||/^(https?:\/\/)/i.test(t));
   return out;
 }
 function pintarGS1(raw){
@@ -465,14 +521,11 @@ function pintarGS1(raw){
   if(d.gtin) h+="🔢 <b>GTIN:</b> "+esc(d.gtin)+"<br>";
   if(d.origen) h+="🌍 <b>País de origen:</b> "+esc(d.origen)+"<br>";
   if(d.inicial) h+="🧪 <b>País de procesamiento inicial:</b> "+esc(d.inicial)+"<br>";
-  if(d.proceso) h+="🏭 <b>País de procesamiento:</b> "+esc(d.proceso)+"<br>";
-  if(d.completo) h+="🏗️ <b>País de toda la cadena de proceso:</b> "+esc(d.completo)+"<br>";
-  if(d.despiece) h+="🔪 <b>País de despiece:</b> "+esc(d.despiece)+"<br>";
-  if(d.glnProduccion) h+="📍 <b>GLN de localización de producción:</b> "+esc(d.glnProduccion)+"<br><small>El GLN identifica una localización; para convertirlo en país hay que consultarlo en un registro de ubicaciones.</small><br>";
-  if(!h && d.es2D) h="📦 <b>QR/DataMatrix GS1 detectado</b><br><small>Este código no contiene un país de origen/proceso que podamos mostrar directamente.</small>";
+  if(!h && d.es2D) h="📦 <b>QR/DataMatrix GS1 detectado</b><br><small>Este código no contiene directamente un país de origen (AI 422) ni de procesamiento inicial (AI 423).</small>";
   box.innerHTML=h ? '<div style="padding:10px;background:#fff7d6;border-radius:10px;border:1px solid #e0c45c">'+h+'</div>' : '';
   return d;
 }
+
 function pintar(){
   const {codigo,prefijo,info}=actual, cuadro=$("resultado");
   const gs1=pintarGS1(actual.gs1Raw||"");
@@ -496,7 +549,17 @@ function pintar(){
     }
   }
   $("frase").textContent=frase;
-  let html=info.nombre?"<b>"+esc(info.nombre)+"</b><br>":"";
+  let html="";
+  if(info.nombre) html+="💧 <b>Producto:</b> "+esc(info.nombre)+"<br>";
+  if(info.marca) html+="🏷️ <b>Marca:</b> "+esc(info.marca)+"<br>";
+  if(info.denominacion && norm(info.denominacion)!==norm(info.nombre)) html+="📄 <b>Denominación:</b> "+esc(info.denominacion)+"<br>";
+  if(info.cantidad) html+="📦 <b>Cantidad:</b> "+esc(info.cantidad)+"<br>";
+  if(info.categoria) html+="🗂️ <b>Categoría:</b> "+esc(info.categoria)+"<br>";
+  if(info.descripcion) html+="📝 <b>Descripción:</b> "+esc(info.descripcion)+"<br>";
+  if(info.embalaje) html+="📦 <b>Envase:</b> "+esc(info.embalaje)+"<br>";
+  if(info.paisesVenta) html+="🛒 <b>Países donde figura a la venta:</b> "+esc(info.paisesVenta)+"<br>";
+  if(info.fuente) html+="<small>🔎 Fuente de producto: "+esc(info.fuente)+"</small><br>";
+  if(info.gs1Resolver) html+='🌐 <a href="'+esc(info.gs1Resolver.url)+'" target="_blank" rel="noopener" style="font-weight:bold">Consultar GS1 Global Resolver</a><br>';
   if(tieneFabricacion){
     const mismo=norm(paisPrefijo)===norm(paisFab);
     if(!mismo){
