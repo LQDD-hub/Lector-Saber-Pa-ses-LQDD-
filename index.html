@@ -5,14 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>¿De qué país es?</title>
 <link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#1a73e8">
+<meta name="theme-color" content="#AA151B">
 <link rel="icon" type="image/png" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-180.png">
 <style>
-  body{font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:16px;background:#f5f5f5;color:#222}
-  h1{font-size:1.4rem;text-align:center}
+  html{background:#F1BF00}
+  body{font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:16px;min-height:100vh;box-sizing:border-box;background:linear-gradient(#AA151B 0 88px,#F1BF00 88px);color:#2a1a00}
+  h1{font-size:1.4rem;text-align:center;color:#F1BF00;margin:8px 0 40px;text-shadow:0 2px 4px rgba(0,0,0,.4)}
   #lector{width:100%;background:#000;border-radius:12px;overflow:hidden;min-height:60px}
-  button{width:100%;padding:12px;margin-top:10px;font-size:1rem;border:0;border-radius:10px;background:#1a73e8;color:#fff}
+  button{width:100%;padding:12px;margin-top:10px;font-size:1rem;border:0;border-radius:10px;background:#AA151B;color:#F1BF00;font-weight:bold}
   .fila{display:flex;gap:8px;margin-top:10px}
   input{flex:1;padding:12px;font-size:1rem;border:1px solid #bbb;border-radius:10px}
   .fila button{width:auto;margin:0}
@@ -20,11 +21,11 @@
   #resultado.ok{background:#c9f5cf;border-color:#1e9e3a}
   #resultado.mal{background:#ffd3d3;border-color:#d32f2f}
   #pais{font-size:1.6rem;font-weight:bold;margin:6px 0}
-  small{color:#666}
-  h2{font-size:1.1rem;margin:22px 0 6px}
+  small{color:#5a4200}
+  h2{font-size:1.1rem;margin:22px 0 6px;color:#7a0f14}
   .item{background:#fff;border-radius:10px;padding:10px 12px;margin-top:6px;font-size:.95rem}
   .item small{display:block}
-  #borrar{background:#888;padding:8px;font-size:.9rem}
+  #borrar{background:#6b4e00;color:#fff;padding:8px;font-size:.9rem}
 </style>
 </head>
 <body>
@@ -37,6 +38,7 @@
 </div>
 <div id="resultado">
   <small id="codigo"></small>
+  <div id="frase" style="font-size:1.4rem;font-weight:bold;margin:8px 0"></div>
   <div id="pais"></div>
   <div id="fabrica" style="margin:10px 0;font-size:1.1rem"></div>
   <small id="origen"></small>
@@ -121,44 +123,137 @@ window.addEventListener("pointerdown", () => {
   try{ const u = new SpeechSynthesisUtterance(""); u.volume = 0; speechSynthesis.speak(u); }catch(e){}
 }, {once:true});
 
-async function mostrar(codigo){
-  const pais = paisDe(codigo);
-  document.getElementById("resultado").style.display = "block";
-  document.getElementById("codigo").textContent = "Código: " + codigo;
-  document.getElementById("pais").textContent = pais ? bandera(pais) + " " + pais : "Código no válido";
-  const cuadro = document.getElementById("resultado");
-  cuadro.className = !pais ? "" : (pais === "España" ? "ok" : "mal");
-  if(pais === "España") hablar("Perfecto");
-  else if(pais) hablar("No es de España. Es de " + pais.split(" / ")[0]);
-  else hablar("Código no válido");
-  const o = document.getElementById("origen");
-  o.textContent = pais ? "El prefijo indica dónde se registró la marca, no siempre dónde se fabricó." : "";
-  if(!pais) return;
-  const f = document.getElementById("fabrica");
-  f.textContent = "🔎 Buscando dónde se fabricó...";
+// ---------- Dónde se PRODUJO (no dónde se registró la marca) ----------
+const ALIAS = [
+ ["España",["espana","spain","espagne","spanien"]],
+ ["Francia",["francia","france"]],
+ ["Alemania",["alemania","germany","allemagne","deutschland"]],
+ ["Italia",["italia","italy","italie"]],
+ ["Portugal",["portugal"]],
+ ["Reino Unido",["reino unido","united kingdom","royaume-uni","great britain","inglaterra","england"]],
+ ["Países Bajos",["paises bajos","netherlands","holland","holanda","pays-bas"]],
+ ["Bélgica",["belgica","belgium","belgique"]],
+ ["Polonia",["polonia","poland","pologne"]],
+ ["Marruecos",["marruecos","morocco","maroc"]],
+ ["China",["china"]],
+ ["Turquía",["turquia","turkey","turkiye"]],
+ ["EE. UU.",["estados unidos","united states","usa","ee. uu","ee.uu"]],
+ ["México",["mexico"]],
+ ["Argentina",["argentina"]],
+ ["Brasil",["brasil","brazil"]],
+ ["Chile",["chile"]],
+ ["Colombia",["colombia"]],
+ ["Perú",["peru"]],
+ ["India",["india"]],
+ ["Japón",["japon","japan"]],
+ ["Tailandia",["tailandia","thailand"]],
+ ["Vietnam",["vietnam"]],
+ ["Irlanda",["irlanda","ireland"]],
+ ["Suiza",["suiza","switzerland","suisse"]],
+ ["Austria",["austria"]],
+ ["Dinamarca",["dinamarca","denmark"]],
+ ["Suecia",["suecia","sweden"]],
+ ["Grecia",["grecia","greece"]],
+ ["Rumanía",["rumania","romania"]],
+ ["Hungría",["hungria","hungary"]],
+ ["Egipto",["egipto","egypt"]],
+ ["Indonesia",["indonesia"]],
+ ["Corea del Sur",["corea del sur","south korea"]]
+];
+const EMB = {AT:"Austria",BE:"Bélgica",BG:"Bulgaria",CY:"Chipre",CZ:"Chequia",DE:"Alemania",DK:"Dinamarca",EE:"Estonia",ES:"España",FI:"Finlandia",FR:"Francia",GR:"Grecia",HR:"Croacia",HU:"Hungría",IE:"Irlanda",IT:"Italia",LT:"Lituania",LU:"Bélgica / Luxemburgo",LV:"Letonia",MT:"Malta",NL:"Países Bajos",PL:"Polonia",PT:"Portugal",RO:"Rumanía",SE:"Suecia",SI:"Eslovenia",SK:"Eslovaquia",GB:"Reino Unido",UK:"Reino Unido"};
+const norm = t => String(t||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+// Busca el primer país que aparece nombrado en un texto libre
+function detectar(texto){
+  const t = norm(texto);
+  let mejor = null, pos = 1e9;
+  for(const [pais, alias] of ALIAS){
+    for(const a of alias){
+      const m = new RegExp("(^|[^a-z])"+a.replace(/[.]/g,"\\.")+"([^a-z]|$)").exec(t);
+      if(m && m.index < pos){ pos = m.index; mejor = pais; }
+    }
+  }
+  return mejor;
+}
+// Código de envasador/sanitario de la UE: "ES 10.02547/H CE", "FR 35.123.001 CE", "EMB 35123"
+function deEmb(texto){
+  const t = String(texto||"").toUpperCase();
+  if(/EMB\s?\d/.test(t)) return "Francia";
+  const m = t.match(/(?:^|[^A-Z])([A-Z]{2})\s?\d/);
+  return (m && EMB[m[1]]) || null;
+}
+// Etiquetas tipo "en:made-in-spain"
+function deEtiqueta(tags){
+  for(const t of (tags||[])){
+    const m = String(t).match(/made-in-([a-z-]+)/);
+    if(m){ const p = detectar(m[1].replace(/-/g," ")); if(p) return p; }
+  }
+  return null;
+}
+
+async function buscarProducto(codigo){
   const bases = ["openfoodfacts","openbeautyfacts","openproductsfacts"];
-  let fab = "", ori = "", nombre = "";
-  for(const b of bases){
+  const res = await Promise.all(bases.map(async b => {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 5000);
     try{
-      const r = await fetch("https://world."+b+".org/api/v2/product/"+codigo+".json?fields=product_name,manufacturing_places,origins");
+      const r = await fetch("https://world."+b+".org/api/v2/product/"+codigo+".json?fields=product_name,manufacturing_places,origins,emb_codes,labels_tags", {signal: ac.signal});
       const d = await r.json();
-      if(d.status === 1 && d.product){
-        nombre = nombre || d.product.product_name || "";
-        fab = fab || d.product.manufacturing_places || "";
-        ori = ori || d.product.origins || "";
-        if(fab) break;
-      }
-    }catch(e){}
+      return d.status === 1 ? d.product : null;
+    }catch(e){ return null; }
+    finally{ clearTimeout(t); }
+  }));
+  const ps = res.filter(Boolean);
+  const campo = c => ps.map(p => p[c]).find(v => v && (!Array.isArray(v) || v.length)) || "";
+  const nombre = campo("product_name"), fab = campo("manufacturing_places"), ori = campo("origins");
+  let prod = null, p;
+  if((p = detectar(fab))) prod = {pais:p, fuente:"lugar de fabricación"};
+  else if((p = deEtiqueta(campo("labels_tags")))) prod = {pais:p, fuente:"etiqueta «Hecho en»"};
+  else if((p = deEmb(campo("emb_codes")))) prod = {pais:p, fuente:"código de envasador"};
+  return {nombre, fab, ori, prod};
+}
+
+async function mostrar(codigo){
+  const $ = id => document.getElementById(id);
+  const prefijo = paisDe(codigo);
+  const cuadro = $("resultado");
+  cuadro.style.display = "block";
+  cuadro.className = "";
+  $("codigo").textContent = "Código: " + codigo;
+  $("frase").textContent = ""; $("fabrica").textContent = ""; $("origen").textContent = "";
+  if(!prefijo){
+    $("pais").textContent = "Código no válido";
+    hablar("Código no válido");
+    return;
   }
-  const partes = [];
-  if(fab) partes.push("🏭 Fabricado en: " + fab);
-  if(ori) partes.push("🌾 Origen de ingredientes: " + ori);
-  if(partes.length){
-    f.innerHTML = (nombre ? "<b>"+nombre+"</b><br>" : "") + partes.join("<br>");
-  }else{
-    f.textContent = "🏭 No hay datos de fabricación para este producto en las bases abiertas.";
+  $("pais").textContent = "🔎 Buscando dónde se fabricó...";
+  const info = await buscarProducto(codigo);
+  const confirmado = !!info.prod;
+  const pais = confirmado ? info.prod.pais : prefijo;
+  const desconocido = !confirmado && prefijo.startsWith("Desconocido");
+  const nombre = pais.split(" / ")[0];
+
+  $("pais").textContent = desconocido ? "🌍 País desconocido" : bandera(pais) + " " + pais;
+  let frase = "";
+  if(!desconocido){
+    frase = pais === "España" ? "¡Viva España!" : (pais === "Marruecos" ? "¡No, no, no, no, no!" : "¡No!");
+    cuadro.className = pais === "España" ? "ok" : "mal";
   }
-  guardar(codigo, pais, fab);
+  $("frase").textContent = frase;
+
+  const detalle = confirmado
+    ? "Producido en " + nombre
+    : (desconocido ? "No sé de qué país es" : "Según el código de barras, es de " + nombre);
+  let html = info.nombre ? "<b>"+esc(info.nombre)+"</b><br>" : "";
+  if(confirmado) html += "🏭 Producido en <b>"+esc(pais)+"</b> <small>("+info.prod.fuente+")</small>";
+  else html += "🏷️ Según el código de barras. <small>No consta dónde se fabricó: el prefijo solo indica dónde se registró la marca.</small>";
+  if(info.fab) html += "<br>📍 " + esc(info.fab);
+  if(info.ori) html += "<br>🌾 Ingredientes de: " + esc(info.ori);
+  $("fabrica").innerHTML = html;
+
+  hablar((frase ? frase + " " : "") + detalle);
+  guardar(codigo, desconocido ? "Desconocido" : pais, confirmado ? "producido en " + nombre : "según el código");
 }
 
 let scanner, activo = false, ultimo = "";
