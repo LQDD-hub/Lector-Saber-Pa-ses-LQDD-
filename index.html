@@ -418,8 +418,8 @@ const ISO_NUM = {
   "076":"Brasil","100":"Bulgaria","124":"Canadá","152":"Chile","156":"China","170":"Colombia",
   "191":"Croacia","196":"Chipre","203":"Chequia","208":"Dinamarca","214":"República Dominicana",
   "218":"Ecuador","222":"El Salvador","233":"Estonia","246":"Finlandia","250":"Francia",
-  "276":"Alemania","300":"Grecia","320":"Guatemala","328":"Guyana","348":"Hungría",
-  "356":"India","360":"Indonesia","372":"Irlanda","376":"Israel","380":"Italia","392":"Japón",
+  "276":"Alemania","300":"Grecia","320":"Guatemala","348":"Hungría","356":"India",
+  "360":"Indonesia","372":"Irlanda","376":"Israel","380":"Italia","392":"Japón",
   "398":"Kazajistán","400":"Jordania","404":"Kenia","410":"Corea del Sur","414":"Kuwait",
   "422":"Líbano","428":"Letonia","440":"Lituania","442":"Luxemburgo","458":"Malasia",
   "462":"Irán","470":"Malta","484":"México","496":"Mongolia","498":"Moldavia","504":"Marruecos",
@@ -436,41 +436,47 @@ function paisISO3(n){
   return ISO_NUM[k] || null;
 }
 function limpiarGS1(txt){ return String(txt||"").replace(/\u001d/g,"|").replace(/[\u001c\u001e]/g,"|").trim(); }
+
+// Solo mostramos los 5 datos que interesan en la aplicación:
+// 1) prefijo GS1, 2) origen, 3) fabricación, 4) envasador, 5) procesamiento inicial.
 function extraerGS1(raw){
   const t=limpiarGS1(raw);
-  const out={raw:t, gtin:null, origen:null, inicial:null, proceso:null, completo:null, despiece:null, glnProduccion:null, es2D:false};
-  // GS1 Digital Link: https://dominio/.../01/GTIN...?422=724&424=156 etc.
-  const mG=t.match(/(?:[?&]|\/)01[=\/]?(\d{14})(?:[&/]|$)/); if(mG) out.gtin=mG[1].replace(/^0+/,'')||mG[1];
-  const pairs=[["422","origen"],["423","inicial"],["424","proceso"],["425","despiece"],["426","completo"]];
+  const out={raw:t, gtin:null, origen:null, inicial:null, es2D:false};
+
+  // GS1 Digital Link: /01/GTIN...?422=724&423=724
+  const mG=t.match(/(?:[?&]|\/)01[=\/]?(\d{14})(?:[&/]|$)/);
+  if(mG) out.gtin=mG[1].replace(/^0+/,'')||mG[1];
+
+  const pairs=[["422","origen"],["423","inicial"]];
   for(const [ai,key] of pairs){
     const re=new RegExp("(?:[?&]|\\\\|\\(|^)"+ai+"[=]?(\\d{3})");
-    const m=t.match(re); if(m) out[key]=paisISO3(m[1]) || "Código ISO "+m[1];
+    const m=t.match(re);
+    if(m) out[key]=paisISO3(m[1]) || "Código ISO "+m[1];
   }
-  const m416=t.match(/(?:[?&]|\||\()416[=]?(\d{13})/); if(m416) out.glnProduccion=m416[1];
-  // GS1 element string: (422)724, (423)724..., (424)156, (426)724, o sin paréntesis con GS.
+
+  // GS1 element string: (422)724, (423)724, o campos separados.
   for(const [ai,key] of pairs){
     if(out[key]) continue;
     const re=new RegExp("(?:\\("+ai+"\\)|(?:^|[|])"+ai+")(\\d{3})");
-    const m=t.match(re); if(m) out[key]=paisISO3(m[1]) || "Código ISO "+m[1];
+    const m=t.match(re);
+    if(m) out[key]=paisISO3(m[1]) || "Código ISO "+m[1];
   }
-  const m416b=t.match(/(?:\(416\)|(?:^|[|])416)(\d{13})/); if(m416b) out.glnProduccion=m416b[1];
-  out.es2D=!!(out.origen||out.inicial||out.proceso||out.completo||out.despiece||out.glnProduccion||/^(https?:\/\/)/i.test(t));
+
+  out.es2D=!!(out.origen||out.inicial||/^(https?:\/\/)/i.test(t));
   return out;
 }
+
 function pintarGS1(raw){
   const box=$("gs1Datos"); if(!box) return null;
   const d=extraerGS1(raw); let h="";
   if(d.gtin) h+="🔢 <b>GTIN:</b> "+esc(d.gtin)+"<br>";
   if(d.origen) h+="🌍 <b>País de origen:</b> "+esc(d.origen)+"<br>";
   if(d.inicial) h+="🧪 <b>País de procesamiento inicial:</b> "+esc(d.inicial)+"<br>";
-  if(d.proceso) h+="🏭 <b>País de procesamiento:</b> "+esc(d.proceso)+"<br>";
-  if(d.completo) h+="🏗️ <b>País de toda la cadena de proceso:</b> "+esc(d.completo)+"<br>";
-  if(d.despiece) h+="🔪 <b>País de despiece:</b> "+esc(d.despiece)+"<br>";
-  if(d.glnProduccion) h+="📍 <b>GLN de localización de producción:</b> "+esc(d.glnProduccion)+"<br><small>El GLN identifica una localización; para convertirlo en país hay que consultarlo en un registro de ubicaciones.</small><br>";
-  if(!h && d.es2D) h="📦 <b>QR/DataMatrix GS1 detectado</b><br><small>Este código no contiene un país de origen/proceso que podamos mostrar directamente.</small>";
+  if(!h && d.es2D) h="📦 <b>QR/DataMatrix GS1 detectado</b><br><small>Este código no contiene datos de origen o procesamiento inicial que podamos mostrar directamente.</small>";
   box.innerHTML=h ? '<div style="padding:10px;background:#fff7d6;border-radius:10px;border:1px solid #e0c45c">'+h+'</div>' : '';
   return d;
 }
+
 function pintar(){
   const {codigo,prefijo,info}=actual, cuadro=$("resultado");
   const gs1=pintarGS1(actual.gs1Raw||"");
