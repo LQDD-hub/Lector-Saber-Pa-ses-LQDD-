@@ -752,7 +752,7 @@ async function iniciar(){
   try{
     const ancho=Math.min(320,Math.max(240,window.innerWidth-64));
     await scanner.start(
-      {facingMode:{ideal:"environment"}},
+      {facingMode:"environment"},
       {fps:15,qrbox:{width:ancho,height:180},aspectRatio:1.7777778},
       async txt=>{
         if(!activo)return;
@@ -803,7 +803,8 @@ if(vozBtn){
 }
 
 btn.onclick = () => activo ? parar() : iniciar();
-window.addEventListener("load", iniciar);
+// No iniciamos la cámara automáticamente: en móviles el permiso de cámara debe solicitarse tras pulsar el botón.
+
 document.getElementById("ok").onclick = () => mostrar(document.getElementById("manual").value);
 </script>
 </body>
