@@ -373,6 +373,112 @@ function textoUPC(item){
   return [item.title,item.brand,item.category,item.description,item.manufacturer,item.model,item.size].filter(Boolean).join(" | ");
 }
 
+// Evidencias oficiales verificadas para productos/marcas cuya información pública
+// permite determinar el lugar de fabricación/envasado con mucha más precisión
+// que el prefijo GS1. No se muestra ningún enlace al usuario: solo se usa como
+// fuente interna de verificación.
+const REGLAS_OFICIALES_FABRICACION = [
+  {
+    nombres:["font natura","font natura agua mineral","font natura agua mineral natural"],
+    marcas:["font natura","san benedetto"],
+    codigo:"8429359003524",
+    pais:"España",
+    lugar:"Loja (Granada), España",
+    fuente:"Fabricante oficial · San Benedetto España",
+    detalle:"San Benedetto indica que el agua mineral Font Natura se envasa en su planta de Loja (Granada), procedente del manantial Font Natura de la Sierra de Loja."
+  }
+];
+
+function evidenciaOficialProducto(codigo,nombre,marca){
+  const texto=norm([nombre,marca].filter(Boolean).join(" | "));
+  const c=String(codigo||"").replace(/\D/g,"");
+  for(const r of REGLAS_OFICIALES_FABRICACION){
+    const coincideCodigo=r.codigo && c===r.codigo;
+    const coincideNombre=r.nombres.some(x=>texto.includes(norm(x)));
+    const coincideMarca=r.marcas.some(x=>texto.includes(norm(x)));
+    if(coincideCodigo || (coincideNombre && coincideMarca) || coincideNombre){
+      return {pais:r.pais,nivel:"confirmado",fuente:r.fuente,lugar:r.lugar,detalle:r.detalle};
+    }
+  }
+  return null;
+}
+
+
+// --- Búsqueda automática de evidencia del fabricante en la web ---
+// Usa Jina Reader como lector web gratuito y una página de resultados pública.
+// No sustituye una fuente oficial: solo crea evidencia cuando encuentra señales
+// claras de fabricación/envasado en una página relacionada con la marca/producto.
+const PAISES_BUSQUEDA = [
+  ["España",["españa","spain","español","spanish"]],["Portugal",["portugal"]],["Francia",["francia","france"]],["Italia",["italia","italy"]],
+  ["Alemania",["alemania","germany","deutschland"]],["Marruecos",["marruecos","morocco"]],["China",["china"]],["Países Bajos",["países bajos","netherlands","holland"]],
+  ["Bélgica",["bélgica","belgium"]],["Polonia",["polonia","poland"]],["Reino Unido",["reino unido","uk","united kingdom","england"]],["Estados Unidos",["estados unidos","usa","united states"]],
+  ["Suiza",["suiza","switzerland"]],["Turquía",["turquía","turkey"]],["Grecia",["grecia","greece"]],["Rumanía",["rumanía","romania"]],
+  ["México",["méxico","mexico"]],["Argentina",["argentina"]],["Brasil",["brasil","brazil"]],["India",["india"]],["Japón",["japón","japan"]],
+  ["Corea del Sur",["corea del sur","south korea","korea"]],["Canadá",["canadá","canada"]],["Australia",["australia"]]
+];
+
+function paisesEnTextoWeb(txt){
+  const t=norm(txt); const encontrados=[];
+  for(const [pais,variantes] of PAISES_BUSQUEDA){
+    if(variantes.some(v=>t.includes(norm(v)))) encontrados.push(pais);
+  }
+  return encontrados;
+}
+function señalesFabricacionWeb(txt){
+  const t=norm(txt);
+  const claves=["fabricad","manufactur","made in","produced in","produced at","manufacturing plant","factory","fabrica","envasad","embotell","bottled at","bottled in","production plant","planta de produccion","planta de fabricacion","usine","stabilimento"];
+  return claves.filter(k=>t.includes(norm(k))).length;
+}
+function esDominioRelacionado(url,nombre,marca){
+  try{
+    const host=new URL(url).hostname.toLowerCase().replace(/^www\./,"");
+    const texto=norm([nombre,marca].filter(Boolean).join(" ")).replace(/[^a-z0-9]+/g,"");
+    if(!texto) return false;
+    const palabras=texto.match(/[a-z0-9]{4,}/g)||[];
+    return palabras.some(w=>host.replace(/[^a-z0-9]/g,"").includes(w));
+  }catch(e){ return false; }
+}
+function extraerResultadosBusquedaJina(txt){
+  const out=[];
+  const re=/(https?:\/\/[^\s<>"']+)/g; let m;
+  while((m=re.exec(txt)) && out.length<10){
+    let u=m[1].replace(/[),.;]+$/g,"");
+    if(/(google\.|bing\.|duckduckgo\.|jina\.ai)/i.test(u)) continue;
+    if(!out.includes(u)) out.push(u);
+  }
+  return out;
+}
+
+async function buscarEvidenciaFabricanteWeb(codigo,nombre,marca){
+  if(!nombre && !marca) return null;
+  const q=encodeURIComponent('"'+(codigo||"")+'" '+[marca,nombre].filter(Boolean).join(" ")+" (fabricado OR envasado OR fabricante OR factory OR manufactured)");
+  const url="https://r.jina.ai/https://html.duckduckgo.com/html/?q="+q;
+  const ac=new AbortController(), t=setTimeout(()=>ac.abort(),12000);
+  try{
+    const r=await fetch(url,{signal:ac.signal,headers:{"Accept":"text/plain"}});
+    if(!r.ok) return null;
+    const txt=await r.text();
+    const urls=extraerResultadosBusquedaJina(txt);
+    const candidatos=urls.filter(u=>esDominioRelacionado(u,nombre,marca));
+    const lista=(candidatos.length?candidatos:urls).slice(0,3);
+    for(const u of lista){
+      const ac2=new AbortController(), t2=setTimeout(()=>ac2.abort(),10000);
+      try{
+        const rr=await fetch("https://r.jina.ai/"+u,{signal:ac2.signal,headers:{"Accept":"text/plain"}});
+        if(!rr.ok) continue;
+        const pagina=(await rr.text()).slice(0,120000);
+        const sen=señalesFabricacionWeb(pagina);
+        const paises=paisesEnTextoWeb(pagina);
+        if(sen>=2 && paises.length){
+          const mismoPais=paises[0];
+          return {pais:mismoPais,nivel:"deducido",fuente:"Web · fabricante/resultado relacionado",detalle:"La página encontrada contiene varias referencias a fabricación, producción o envasado y menciona " + paises.join(", ") + ".",url:u,lugar:null};
+        }
+      }catch(e){} finally{clearTimeout(t2);}
+    }
+  }catch(e){} finally{clearTimeout(t);}
+  return null;
+}
+
 async function buscarProducto(codigo){
   const bases=["openfoodfacts","openbeautyfacts","openproductsfacts"];
   const campos="product_name,abbreviated_product_name,generic_name,brands,quantity,product_quantity,product_quantity_unit,categories,categories_tags,manufacturing_places,manufacturing_places_tags,cities_tags,origins,origins_tags,origin,labels,labels_tags,emb_codes,emb_codes_tags,emb_codes_orig,packaging_text,customer_service,producer,stores,link,knowledge_panels";
@@ -448,7 +554,19 @@ async function buscarProducto(codigo){
   // 5) UPCitemdb: sirve para completar identidad del producto y como pista secundaria si contiene país.
   if(upcCountry) evidencias.push({pais:upcCountry,nivel:"asociado",fuente:"UPCitemdb · datos del producto",detalle:upcText});
 
-  const prioridad={confirmado:3,asociado:2};
+  // 6) Fuente oficial del fabricante. Tiene prioridad sobre las pistas
+  // secundarias porque puede documentar directamente dónde se fabrica/envasa.
+  const oficial=evidenciaOficialProducto(codigo,nombre,marca);
+  if(oficial) evidencias.unshift(oficial);
+
+  // Si las bases y reglas verificadas no han encontrado fabricación confirmada,
+  // intentamos localizar una página del fabricante/brand y extraer evidencia.
+  if(!evidencias.some(e=>e.nivel==="confirmado")){
+    const webFab=await buscarEvidenciaFabricanteWeb(codigo,nombre,marca);
+    if(webFab) evidencias.push(webFab);
+  }
+
+  const prioridad={confirmado:4,deducido:3,asociado:2};
   evidencias.sort((a,b)=>(prioridad[b.nivel]||0)-(prioridad[a.nivel]||0));
   const prod=evidencias.find(x=>x.pais)||null;
 
@@ -553,8 +671,9 @@ function pintar(){
   if(info.ori) html+="🌍 <b>Origen declarado:</b> "+esc(info.ori)+"<br>";
   if(tieneFabricacion){
     const mismo=norm(paisPrefijo)===norm(paisFab);
-    const nivel=info.prod.nivel==="confirmado"?"🟢 CONFIRMADO":"🟡 ASOCIADO";
-    html+=nivel+" · 🏭 <b>Fabricado en: "+esc(paisFab)+"</b> <small>("+esc(info.prod.fuente)+")</small>";
+    const nivel=info.prod.nivel==="confirmado"?"🟢 CONFIRMADO":(info.prod.nivel==="deducido"?"🟠 DEDUCIDO":"🟡 ASOCIADO");
+    html+=nivel+" · 🏭 <b>Fabricado/envasado en: "+esc(paisFab)+"</b> <small>("+esc(info.prod.fuente)+")</small>";
+    if(info.prod.lugar) html+="<br>📍 <b>Lugar:</b> "+esc(info.prod.lugar);
     if(info.prod.detalle) html+="<br><small>📌 Evidencia: "+esc(info.prod.detalle)+"</small>";
     $("fabricadoEn").textContent=(info.prod.nivel==="confirmado"?"🟢 ":"🟡 ")+"Fabricado en "+paisFab;
     if(!mismo) html+="<br>⚠️ El prefijo GS1 es "+esc(paisPrefijo)+", pero la evidencia de fabricación/establecimiento apunta a "+esc(paisFab)+".";
@@ -570,14 +689,14 @@ function pintar(){
   if(info.evidencias && info.evidencias.length>1){
     html+="<br><br><b>🔍 Evidencias encontradas</b>";
     info.evidencias.slice(0,4).forEach(e=>{
-      html+="<br>· "+(e.nivel==="confirmado"?"🟢":"🟡")+" "+esc(e.fuente)+(e.pais?": "+esc(e.pais):"");
+      html+="<br>· "+(e.nivel==="confirmado"?"🟢":(e.nivel==="deducido"?"🟠":"🟡"))+" "+esc(e.fuente)+(e.pais?": "+esc(e.pais):"");
     });
   }
   const fuentesTexto=(info.fuentes&&info.fuentes.length?info.fuentes.map(x=>x.replace("openfoodfacts","Open Food Facts").replace("openbeautyfacts","Open Beauty Facts").replace("openproductsfacts","Open Products Facts")).join(" · "):"Ninguna de las bases de producto devolvió ficha")+(info.upc?" · UPCitemdb":"");
   html+="<br><br><small>🔎 <b>Fuentes consultadas:</b> "+esc(fuentesTexto)+"</small>";
   $("fabrica").innerHTML=html;
   if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia();
-  const detalle=tieneFabricacion?(info.prod.nivel==="confirmado"?"El producto tiene un dato de fabricación declarado en "+paisFab:"Hay una evidencia asociada a un establecimiento en "+paisFab+", pero no demuestra por sí sola la fabricación"):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no hay una evidencia pública suficiente para confirmar dónde se fabricó.";
+  const detalle=tieneFabricacion?(info.prod.nivel==="confirmado"?(info.prod.lugar?"El producto figura como fabricado o envasado en "+info.prod.lugar:"El producto tiene un dato de fabricación declarado en "+paisFab):"Hay una evidencia asociada a un establecimiento en "+paisFab+", pero no demuestra por sí sola la fabricación"):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no hay una evidencia pública suficiente para confirmar dónde se fabricó.";
   hablar((frase?frase+" ":"")+detalle);
   guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1");
 }
