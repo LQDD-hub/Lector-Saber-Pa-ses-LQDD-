@@ -330,9 +330,9 @@ function detectar(texto){
 }
 // Código de envasador/sanitario de la UE: "ES 10.02547/H CE", "FR 35.123.001 CE", "EMB 35123"
 function deEmb(texto){
-  const t = String(texto||"").toUpperCase();
-  const m = t.match(/(?:^|[^A-Z])([A-Z]{2})\s?\d/);
-  return (m && EMB[m[1]]) || null;
+  const t=String(texto||"").toUpperCase();
+  const m=t.match(/(?:^|[^A-Z])([A-Z]{2})\s?\d/);
+  return (m&&EMB[m[1]])||null;
 }
 // Etiquetas tipo "en:made-in-spain"
 function deEtiqueta(tags){
@@ -355,45 +355,33 @@ function paisDeTags(tags){
 }
 
 async function buscarProducto(codigo){
-  const bases = ["openfoodfacts","openbeautyfacts","openproductsfacts"];
-  const campos="product_name,abbreviated_product_name,generic_name,brands,quantity,product_quantity,product_quantity_unit,categories,manufacturing_places,manufacturing_places_tags,origins,origins_tags,origin,labels,labels_tags,emb_codes,emb_codes_tags,packaging_text";
-  const res = await Promise.all(bases.map(async b => {
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 7000);
-    try{
-      // v3 es la API actual recomendada por Open Food Facts.
-      const r = await fetch("https://world."+b+".org/api/v3/product/"+encodeURIComponent(codigo)+"?fields="+encodeURIComponent(campos), {signal: ac.signal});
-      if(!r.ok) return null;
-      const d = await r.json();
-      return d && d.product ? d.product : null;
-    }catch(e){ return null; }
-    finally{ clearTimeout(t); }
+  const bases=["openfoodfacts","openbeautyfacts","openproductsfacts"];
+  const campos="product_name,abbreviated_product_name,generic_name,brands,quantity,product_quantity,product_quantity_unit,categories,categories_tags,manufacturing_places,manufacturing_places_tags,origins,origins_tags,origin,labels,labels_tags,emb_codes,emb_codes_tags,packaging_text";
+  const res=await Promise.all(bases.map(async b=>{
+    const ac=new AbortController(), t=setTimeout(()=>ac.abort(),7000);
+    try{const r=await fetch("https://world."+b+".org/api/v3/product/"+encodeURIComponent(codigo)+"?fields="+encodeURIComponent(campos),{signal:ac.signal}); if(!r.ok)return null; const d=await r.json(); return d&&d.product?d.product:null;}
+    catch(e){return null;} finally{clearTimeout(t);}
   }));
-
-  const ps = res.filter(Boolean);
-  const campo = c => ps.map(p => p[c]).find(v => v && (!Array.isArray(v) || v.length)) || "";
-  const nombre = campo("product_name") || campo("abbreviated_product_name");
-  const marca = campo("brands");
-  const denominacion = campo("generic_name");
-  const cantidad = campo("quantity");
-  const categoria = campo("categories");
-  const fab = campo("manufacturing_places");
-  const fabTags = campo("manufacturing_places_tags");
-  const labels = campo("labels_tags");
-  const ori = campo("origins") || campo("origin");
-  const emb = campo("emb_codes");
-  const envase = campo("packaging_text");
-
-  // SOLO consideramos fabricación cuando la base de datos tiene un dato explícito
-  // de manufacturing_places / manufacturing_places_tags o una etiqueta made-in.
-  let prod = null, p;
-  if((p = detectar(fab))) prod = {pais:p, fuente:"Open Food Facts · lugar de fabricación"};
-  else if((p = paisDeTags(fabTags))) prod = {pais:p, fuente:"Open Food Facts · lugar de fabricación"};
-  else if((p = deEtiqueta(labels))) prod = {pais:p, fuente:"Open Food Facts · etiqueta de origen"};
-
-  let envasado = null;
-  if((p = deEmb(emb))) envasado = {pais:p, fuente:"Open Food Facts · código de envasador"};
-  return {nombre, marca, denominacion, cantidad, categoria, fab, ori, emb, envase, prod, envasado};
+  const ps=res.filter(Boolean);
+  const has=(v)=>v&&((Array.isArray(v)&&v.length)||(!Array.isArray(v)&&String(v).trim()));
+  const score=p=>["product_name","brands","generic_name","quantity","categories","manufacturing_places","origins","emb_codes","packaging_text"].reduce((n,k)=>n+(has(p[k])?1:0),0);
+  ps.sort((a,b)=>score(b)-score(a));
+  const campo=k=>ps.map(p=>p[k]).find(has)||"";
+  const nombre=campo("product_name")||campo("abbreviated_product_name");
+  const marca=campo("brands"), denominacion=campo("generic_name");
+  const cantidad=campo("quantity")||([campo("product_quantity"),campo("product_quantity_unit")].filter(Boolean).join(" "));
+  const categoria=campo("categories")||(Array.isArray(campo("categories_tags"))?campo("categories_tags").join(", "):"");
+  const fab=campo("manufacturing_places"), fabTags=campo("manufacturing_places_tags");
+  const ori=campo("origins")||campo("origin"), oriTags=campo("origins_tags");
+  const labels=campo("labels_tags")||campo("labels"), emb=campo("emb_codes"), embTags=campo("emb_codes_tags"), packaging=campo("packaging_text");
+  let prod=null,p;
+  if((p=detectar(fab))) prod={pais:p,fuente:"Lugar de fabricación declarado",nivel:"confirmado"};
+  else if((p=paisDeTags(fabTags))) prod={pais:p,fuente:"Lugar de fabricación declarado",nivel:"confirmado"};
+  else if((p=deEtiqueta(labels))) prod={pais:p,fuente:"Etiqueta del producto",nivel:"asociado"};
+  let envasado=null;
+  if((p=deEmb(emb))) envasado={pais:p,fuente:"Código de envasador",nivel:"asociado"};
+  else if((p=deEmb(embTags))) envasado={pais:p,fuente:"Código de envasador",nivel:"asociado"};
+  return {nombre,marca,denominacion,cantidad,categoria,fab,ori,oriTags,emb,embTags,packaging,prod,envasado,fuentes:ps.length};
 }
 
 // País guardado en el móvil para un código (por ejemplo, leído de la etiqueta)
@@ -487,23 +475,20 @@ function pintar(){
   if(info.denominacion) html+="📄 <b>Denominación:</b> "+esc(info.denominacion)+"<br>";
   if(info.cantidad) html+="⚖️ <b>Cantidad:</b> "+esc(info.cantidad)+"<br>";
   if(info.categoria) html+="🗂️ <b>Categoría:</b> "+esc(info.categoria)+"<br>";
+  if(info.ori) html+="🌍 <b>Origen declarado:</b> "+esc(info.ori)+"<br>";
   if(tieneFabricacion){
     const mismo=norm(paisPrefijo)===norm(paisFab);
-    if(!mismo){
-      html+="⚠️ <b>"+esc(paisPrefijo)+" — ERRÓNEO COMO PAÍS DE FABRICACIÓN</b><br>🏭 <b>Fabricado en: "+esc(paisFab)+"</b> <small>("+esc(info.prod.fuente)+")</small>";
-      $("fabricadoEn").textContent="❌ "+paisPrefijo+" — Fabricado en "+paisFab;
-    }else{
-      html+="✅ <b>Fabricado en: "+esc(paisFab)+"</b> <small>("+esc(info.prod.fuente)+")</small>";
-      $("fabricadoEn").textContent="✅ Fabricado en "+paisFab;
-    }
+    const nivel=info.prod.nivel==="confirmado"?"🟢 CONFIRMADO":"🟡 ASOCIADO";
+    html+=nivel+" · 🏭 <b>Fabricado en: "+esc(paisFab)+"</b> <small>("+esc(info.prod.fuente)+")</small>";
+    $("fabricadoEn").textContent=(info.prod.nivel==="confirmado"?"🟢 ":"🟡 ")+"Fabricado en "+paisFab;
+    if(!mismo) html+="<br>⚠️ El prefijo GS1 es "+esc(paisPrefijo)+", pero el dato de fabricación apunta a "+esc(paisFab)+".";
   }else{
-    html+="🏷️ <b>País del prefijo GS1: "+esc(paisPrefijo)+"</b><br><small>⚪ No hay datos suficientes para confirmar dónde se fabricó.</small>";
-    $("fabricadoEn").textContent="🏭 Fabricación: no disponible";
+    html+="⚪ <b>Fabricación: no disponible</b><br><small>No encontramos un dato suficiente para afirmar el país de fabricación.</small>";
+    $("fabricadoEn").textContent="⚪ Fabricación: no disponible";
   }
-  if(info.fab) html+="<br>📍 Lugar registrado: "+esc(info.fab);
-  if(info.ori) html+="<br>🌍 <b>Origen declarado:</b> "+esc(info.ori);
-  if(info.envase) html+="<br>📦 <b>Envase:</b> "+esc(info.envase);
-  if(info.envasado) html+="<br>📦 <b>País asociado al código de envasador: "+esc(info.envasado.pais)+"</b> <small>("+esc(info.envasado.fuente)+")</small>";
+  if(info.fab) html+="<br>📍 <b>Lugar registrado:</b> "+esc(info.fab);
+  if(info.envasado) html+="<br>📦 <b>País asociado al envasador:</b> "+esc(info.envasado.pais)+" <small>(dato asociado; no demuestra por sí solo la fabricación)</small>";
+  if(info.packaging) html+="<br>📦 <b>Envase:</b> "+esc(info.packaging);
   $("fabrica").innerHTML=html;
   if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia();
   const detalle=tieneFabricacion?(norm(paisPrefijo)===norm(paisFab)?"El producto figura como fabricado en "+paisFab:paisPrefijo+" es el país del prefijo GS1, pero el producto figura como fabricado en "+paisFab):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no hay datos suficientes para saber dónde se fabricó.";
