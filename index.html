@@ -49,10 +49,11 @@
   <div id="frase" style="font-size:1.4rem;font-weight:bold;margin:8px 0"></div>
   <div id="pais"></div>
   <div id="fabricadoEn" style="margin:10px 0;font-size:1.15rem;font-weight:bold"></div>
+  <div id="procedencia" style="margin:10px 0;font-size:1.05rem;text-align:left"></div>
   <div id="fabrica" style="margin:10px 0;font-size:1.1rem"></div>
   <small id="origen"></small>
    <div style="margin-top:10px;font-size:.78rem;color:#5a4200">
-     ℹ️ El prefijo GS1 no confirma dónde se fabricó. 👀 Mira bien el envase: busca la indicación de origen o fabricación para saber de dónde viene realmente.
+     ℹ️ El prefijo GS1 identifica dónde se asignó el número, no necesariamente dónde se fabricó.
    </div>
 </div>
 
@@ -353,9 +354,60 @@ function paisDeTags(tags){
   return null;
 }
 
+
+// ---------- Datos GS1 2D (QR / DataMatrix) ----------
+const GS1_COUNTRY = {
+  "724":"España","250":"Francia","276":"Alemania","380":"Bulgaria","528":"Líbano",
+  "620":"Tanzania","504":"Marruecos","826":"Reino Unido","380":"Bulgaria","380":"Bulgaria",
+  "380":"Bulgaria","056":"Bélgica","208":"Dinamarca","246":"Finlandia","372":"Irlanda",
+  "380":"Bulgaria","300":"Francia","040":"Austria","348":"Hungría","300":"Francia",
+  "380":"Bulgaria","642":"Rumanía","752":"Suecia","756":"Suiza","578":"Noruega",
+  "616":"Polonia","620":"Tanzania","703":"Eslovaquia","705":"Eslovenia","724":"España",
+  "752":"Suecia","756":"Suiza","826":"Reino Unido","840":"Estados Unidos","124":"Canadá",
+  "484":"Moldavia","643":"Rusia","392":"Japón","410":"Corea del Sur","156":"China",
+  "356":"India","764":"Tailandia","704":"Vietnam","710":"Sudáfrica","484":"Moldavia",
+  "076":"Brasil","032":"Argentina","152":"Chile","170":"Colombia","604":"Perú",
+  "218":"Ecuador","858":"Uruguay","600":"Paraguay","591":"Panamá","484":"México"
+};
+function isoNumPais(n){
+  const x=String(n||"").padStart(3,"0");
+  return GS1_COUNTRY[x] || null;
+}
+function extraerGS1(texto){
+  const t=String(texto||"").replace(/[\r\n]/g,"").trim();
+  const out={raw:t,gtin:null,origen:null,procesamientoInicial:null,procesamiento:null,procesoCompleto:null,envasado:null};
+  // AI 01 = GTIN
+  let m=t.match(/(?:\(01\)|01)(\d{14})/); if(m) out.gtin=m[1].replace(/^0+/,"")||m[1];
+  // URI GS1 Digital Link: .../01/GTIN?422=724&423=724001&424=724&426=724
+  const getUri=(ai)=>{ const r=new RegExp("(?:[?&]"+ai+"=)([0-9]{3,15})").exec(t); return r?r[1]:null; };
+  let v=getUri("422"); if(v) out.origen=isoNumPais(v.slice(0,3));
+  v=getUri("423"); if(v) out.procesamientoInicial=isoNumPais(v.slice(0,3));
+  v=getUri("424"); if(v) out.procesamiento=isoNumPais(v.slice(0,3));
+  v=getUri("426"); if(v) out.procesoCompleto=isoNumPais(v.slice(0,3));
+  // Element string GS1 con paréntesis o FNC1 representado como GS (ASCII 29)
+  const clean=t.replace(/\u001d/g,"|");
+  const ai=(n)=>{ const re=new RegExp("(?:\\("+n+"\\)|(?:^|[|])"+n+")(\\d{3})"); const z=re.exec(clean); return z?isoNumPais(z[1]):null; };
+  out.origen ||= ai("422");
+  out.procesamientoInicial ||= ai("423");
+  out.procesamiento ||= ai("424");
+  out.procesoCompleto ||= ai("426");
+  // No existe un AI genérico que diga simplemente “país de envasado” para cualquier producto.
+  return out;
+}
+function pintarGS1(extra){
+  if(!extra || !$("procedencia")) return;
+  const partes=[];
+  if(extra.gtin) partes.push("🔢 <b>GTIN:</b> "+esc(extra.gtin));
+  if(extra.origen) partes.push("🌍 <b>País de origen:</b> "+bandera(extra.origen)+" "+esc(extra.origen));
+  if(extra.procesamientoInicial) partes.push("🧪 <b>Procesamiento inicial:</b> "+bandera(extra.procesamientoInicial)+" "+esc(extra.procesamientoInicial));
+  if(extra.procesamiento) partes.push("🏭 <b>País de procesamiento:</b> "+bandera(extra.procesamiento)+" "+esc(extra.procesamiento));
+  if(extra.procesoCompleto) partes.push("🏗️ <b>Proceso completo:</b> "+bandera(extra.procesoCompleto)+" "+esc(extra.procesoCompleto));
+  $("procedencia").innerHTML=partes.length?partes.join("<br>"):"";
+}
+
 async function buscarProducto(codigo){
   const bases = ["openfoodfacts","openbeautyfacts","openproductsfacts"];
-  const campos="product_name,brands,manufacturing_places,manufacturing_places_tags,origins,origins_tags,labels_tags";
+  const campos="product_name,brands,manufacturing_places,manufacturing_places_tags,origins,origins_tags,labels_tags,emb_codes";
   const res = await Promise.all(bases.map(async b => {
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), 7000);
@@ -376,6 +428,7 @@ async function buscarProducto(codigo){
   const fabTags = campo("manufacturing_places_tags");
   const labels = campo("labels_tags");
   const ori = campo("origins");
+  const emb = campo("emb_codes");
 
   // SOLO consideramos fabricación cuando la base de datos tiene un dato explícito
   // de manufacturing_places / manufacturing_places_tags o una etiqueta made-in.
@@ -384,7 +437,7 @@ async function buscarProducto(codigo){
   else if((p = paisDeTags(fabTags))) prod = {pais:p, fuente:"Open Food Facts · lugar de fabricación"};
   else if((p = deEtiqueta(labels))) prod = {pais:p, fuente:"Open Food Facts · etiqueta de origen"};
 
-  return {nombre, fab, ori, prod};
+  return {nombre, fab, ori, emb, prod};
 }
 
 // País guardado en el móvil para un código (por ejemplo, leído de la etiqueta)
@@ -394,18 +447,19 @@ function guardarFab(c,p){ try{ localStorage.setItem("fab_"+c, JSON.stringify(p))
 let actual = null; // {codigo, prefijo, info}
 const $ = id => document.getElementById(id);
 
-async function mostrar(codigo){
+async function mostrar(codigo, extraGS1=null){
   const prefijo = paisDe(codigo);
   const cuadro = $("resultado"); cuadro.style.display="block"; cuadro.className=""; actual=null;
   $("codigo").textContent="Código: "+codigo;
   $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent="";
   if(!prefijo){ $("pais").textContent="Código no válido"; hablar("Código no válido"); return; }
   $("pais").textContent="🔎 Consultando información del producto...";
-  const info=await buscarProducto(codigo); actual={codigo,prefijo,info}; pintar();
+  const info=await buscarProducto(codigo); actual={codigo,prefijo,info,extraGS1:extraGS1||extraerGS1(codigo)}; pintar();
 }
 
 function pintar(){
-  const {codigo,prefijo,info}=actual, cuadro=$("resultado");
+  const {codigo,prefijo,info,extraGS1}=actual, cuadro=$("resultado");
+  pintarGS1(extraGS1);
   const paisPrefijo=prefijo==="España / Andorra"?"España":prefijo;
   const paisFab=info.prod?(info.prod.pais==="España / Andorra"?"España":info.prod.pais):null;
   const tieneFabricacion=!!paisFab, desconocido=!paisPrefijo||paisPrefijo.startsWith("Desconocido");
@@ -424,15 +478,15 @@ function pintar(){
       $("fabricadoEn").textContent="✅ Fabricado en "+paisFab;
     }
   }else{
-    html+="🏷️ <b>País del prefijo GS1: "+esc(paisPrefijo)+"</b><br><small>⚪ El prefijo no confirma dónde se fabricó. Mira el envase para comprobar el país de origen o fabricación.</small>";
+    html+="🏷️ <b>País del prefijo GS1: "+esc(paisPrefijo)+"</b><br><small>⚪ No hay datos suficientes para confirmar dónde se fabricó.</small>";
     $("fabricadoEn").textContent="🏭 Fabricación: no disponible";
   }
   if(info.fab) html+="<br>📍 Lugar registrado: "+esc(info.fab);
   if(info.ori) html+="<br>🌾 Origen declarado: "+esc(info.ori);
-
+  if(info.emb) html+="<br>📦 <b>Dato de envasado/envasador:</b> "+esc(info.emb);
   $("fabrica").innerHTML=html;
   if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia();
-  const detalle=tieneFabricacion?(norm(paisPrefijo)===norm(paisFab)?"El producto figura como fabricado en "+paisFab:paisPrefijo+" es el país del prefijo GS1, pero el producto figura como fabricado en "+paisFab):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no confirma dónde se fabricó. Mira bien el envase para comprobar el país de origen o fabricación.";
+  const detalle=tieneFabricacion?(norm(paisPrefijo)===norm(paisFab)?"El producto figura como fabricado en "+paisFab:paisPrefijo+" es el país del prefijo GS1, pero el producto figura como fabricado en "+paisFab):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no hay datos suficientes para saber dónde se fabricó.";
   hablar((frase?frase+" ":"")+detalle);
   guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1");
 }
@@ -452,8 +506,8 @@ async function parar(){
 async function iniciar(){
   if(activo)return; activo=true;
   btn.textContent="Parar cámara";
-  if(estadoEscaneo)estadoEscaneo.textContent="📷 Buscando código...";
-  scanner=new Html5Qrcode("lector",{formatsToSupport:[Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,Html5QrcodeSupportedFormats.UPC_A,Html5QrcodeSupportedFormats.UPC_E],experimentalFeatures:{useBarCodeDetectorIfSupported:true},verbose:false});
+  if(estadoEscaneo)estadoEscaneo.textContent="📷 Buscando EAN, QR o GS1 DataMatrix...";
+  scanner=new Html5Qrcode("lector",{formatsToSupport:[Html5QrcodeSupportedFormats.QR_CODE,Html5QrcodeSupportedFormats.DATA_MATRIX,Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,Html5QrcodeSupportedFormats.UPC_A,Html5QrcodeSupportedFormats.UPC_E],experimentalFeatures:{useBarCodeDetectorIfSupported:true},verbose:false});
   try{
     await scanner.start({facingMode:"environment"},{fps:10,qrbox:{width:260,height:140}},async txt=>{
       if(!activo)return;
