@@ -52,7 +52,6 @@
   <div id="fabrica" style="margin:10px 0;font-size:1.1rem"></div>
   <button id="buscaWeb" type="button" style="display:none">🔎 Buscar dónde se fabrica</button>
   <div id="buscaMsg" style="font-size:.9rem;margin-top:8px"></div>
-  <button id="miLugar" type="button" style="display:none;background:#6b4e00;color:#fff;font-size:.9rem;padding:10px">✏️ Lo sé yo: escribir dónde se fabrica</button>
   <small id="origen"></small>
    <div id="gs1Datos" style="margin-top:12px;text-align:left;font-size:.95rem"></div>
    <div style="margin-top:10px;font-size:.78rem;color:#5a4200">
@@ -421,16 +420,6 @@ async function buscarProducto(codigo){
   let evidencias=[];
   let p;
   const hintPais=paisDe(codigo);
-  // 0) Lugar que ha indicado el propio usuario para este código
-  const guardado=cargarFab(codigo);
-  if(guardado && String(guardado).trim()){
-    const pg=detectar(guardado);
-    if(pg) evidencias.push({pais:pg,nivel:"confirmado",fuente:"Lugar indicado por ti",detalle:String(guardado)});
-    else{
-      const g=await ubicarLugar(guardado,hintPais);
-      if(g) evidencias.push({pais:g.pais,nivel:"confirmado",fuente:"Lugar indicado por ti (ubicado con OpenStreetMap)",detalle:String(guardado)+" → "+g.lugar+(g.nota?" · "+g.nota:"")});
-    }
-  }
   // 1) Declaración directa: es la evidencia más fuerte.
   if((p=detectar(fab))) evidencias.push({pais:p,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:fab});
   else if((p=paisDeTags(fabTags))) evidencias.push({pais:p,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:Array.isArray(fabTags)?fabTags.join(", "):String(fabTags)});
@@ -568,7 +557,7 @@ async function mostrar(codigo){
   const prefijo = paisDe(codigoProducto);
   const cuadro = $("resultado"); cuadro.style.display="block"; cuadro.className=""; actual=null;
   $("codigo").textContent="Código: "+codigo;
-  $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("gs1Datos").innerHTML=""; $("buscaMsg").textContent=""; $("miLugar").style.display="none"; $("buscaWeb").style.display="none";
+  $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("gs1Datos").innerHTML=""; $("buscaMsg").textContent=""; $("buscaWeb").style.display="none";
   if(!prefijo){ $("pais").textContent="Código no válido"; hablar("Código no válido"); return; }
   $("pais").textContent="🔎 Consultando información del producto...";
   const info=await buscarProducto(codigoProducto); actual={codigo:codigoProducto,prefijo,info,gs1Raw}; pintar();
@@ -654,7 +643,7 @@ function pintar(silencio){
     $("fabricadoEn").textContent=(info.prod.nivel==="confirmado"?"🟢 ":"🟡 ")+"Fabricado en "+paisFab;
     if(!mismo) html+="<br>⚠️ El prefijo GS1 es "+esc(paisPrefijo)+", pero la evidencia de fabricación/establecimiento apunta a "+esc(paisFab)+".";
   }else{
-    html+="⚪ <b>Fabricación: no disponible</b><br><small>No encontramos una evidencia pública suficiente para afirmar el país de fabricación. Si tú lo sabes, pulsa «Yo sé dónde se fabrica». Sí mostramos abajo las pistas de establecimiento/envasador cuando existen.</small>";
+    html+="⚪ <b>Fabricación: no disponible</b><br><small>No encontramos una evidencia pública suficiente para afirmar el país de fabricación. Sí mostramos abajo las pistas de establecimiento/envasador cuando existen.</small>";
     $("fabricadoEn").textContent="⚪ Fabricación: no disponible";
   }
   if(info.fab) html+="<br>📍 <b>Lugar registrado:</b> "+esc(info.fab);
@@ -730,15 +719,6 @@ if(vozBtn){
 btn.onclick = () => activo ? parar() : iniciar();
 window.addEventListener("load", iniciar);
 document.getElementById("ok").onclick = () => mostrar(document.getElementById("manual").value);
-document.getElementById("miLugar").onclick = async () => {
-  if(!actual) return;
-  const t=prompt("¿Dónde se fabrica este producto?\nEscribe el lugar y, si puedes, la provincia o el país.\nEjemplo: Loja, Granada, España");
-  if(!t || !t.trim()) return;
-  guardarFab(actual.codigo,t.trim());
-  $("pais").textContent="🔎 Buscando ese lugar...";
-  actual.info=await buscarProducto(actual.codigo);
-  pintar(true);
-};
 document.getElementById("buscaWeb").onclick = async () => {
   if(!actual) return;
   const b=$("buscaWeb"), msg=$("buscaMsg");
@@ -754,8 +734,7 @@ document.getElementById("buscaWeb").onclick = async () => {
     const m={"sin-datos":"Este código no está en las bases de datos y no tengo ni marca ni nombre para buscarlo.",
              "sin-parecidos":"No encontré otros productos de esa marca en las bases abiertas.",
              "sin-fabricacion":"Encontré productos de esa marca, pero ninguno dice dónde se fabrica."};
-    msg.textContent="😕 "+(m[r&&r.error]||"No pude completar la búsqueda. Comprueba tu conexión.")+" ¿Lo sabes tú?";
-    $("miLugar").style.display="block";
+    msg.textContent="😕 "+(m[r&&r.error]||"No pude completar la búsqueda. Comprueba tu conexión.")+"";
   }
 };
 </script>
