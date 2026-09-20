@@ -52,7 +52,7 @@
   <div id="fabrica" style="margin:10px 0;font-size:1.1rem"></div>
   <small id="origen"></small>
    <div style="margin-top:10px;font-size:.78rem;color:#5a4200">
-     ℹ️ El prefijo GS1 identifica dónde se asignó el número, no necesariamente dónde se fabricó.
+     ℹ️ El prefijo GS1 no confirma dónde se fabricó. 👀 Mira bien el envase: busca la indicación de origen o fabricación para saber de dónde viene realmente.
    </div>
 </div>
 
@@ -424,7 +424,7 @@ function pintar(){
       $("fabricadoEn").textContent="✅ Fabricado en "+paisFab;
     }
   }else{
-    html+="🏷️ <b>País del prefijo GS1: "+esc(paisPrefijo)+"</b><br><small>⚪ No hay datos suficientes para confirmar dónde se fabricó.</small>";
+    html+="🏷️ <b>País del prefijo GS1: "+esc(paisPrefijo)+"</b><br><small>⚪ El prefijo no confirma dónde se fabricó. Mira el envase para comprobar el país de origen o fabricación.</small>";
     $("fabricadoEn").textContent="🏭 Fabricación: no disponible";
   }
   if(info.fab) html+="<br>📍 Lugar registrado: "+esc(info.fab);
@@ -432,7 +432,7 @@ function pintar(){
 
   $("fabrica").innerHTML=html;
   if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia();
-  const detalle=tieneFabricacion?(norm(paisPrefijo)===norm(paisFab)?"El producto figura como fabricado en "+paisFab:paisPrefijo+" es el país del prefijo GS1, pero el producto figura como fabricado en "+paisFab):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no hay datos suficientes para saber dónde se fabricó.";
+  const detalle=tieneFabricacion?(norm(paisPrefijo)===norm(paisFab)?"El producto figura como fabricado en "+paisFab:paisPrefijo+" es el país del prefijo GS1, pero el producto figura como fabricado en "+paisFab):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no confirma dónde se fabricó. Mira bien el envase para comprobar el país de origen o fabricación.";
   hablar((frase?frase+" ":"")+detalle);
   guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1");
 }
