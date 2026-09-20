@@ -2,6 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
+<meta name="app-version" content="2026.09.20-websearch-v2">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LQDD SCANNER</title>
 <link rel="manifest" href="manifest.json">
@@ -451,123 +452,150 @@ function dominioPareceOficial(url,nombre,marca){
 }
 function extraerResultadosBusquedaJina(txt){
   const out=[];
-  // Jina puede devolver enlaces en Markdown o URLs desnudas.
-  const md=/\[([^\]]{2,220})\]\((https?:\/\/[^\s)]+)\)/g; let m;
-  while((m=md.exec(txt)) && out.length<20){
-    const title=m[1].replace(/\s+/g," ").trim();
-    let u=m[2].replace(/[),.;]+$/g,"");
-    if(/(google\.|bing\.|duckduckgo\.|jina\.ai)/i.test(u)) continue;
-    if(!out.some(x=>x.url===u)) out.push({url:u,title});
+  const seen=new Set();
+  const add=(url,title="")=>{
+    if(!url) return;
+    let u=String(url).replace(/&amp;/g,"&").replace(/[),.;]+$/g,"").trim();
+    if(!/^https?:\/\//i.test(u)) return;
+    try{ u=new URL(u).href; }catch(e){ return; }
+    const host=new URL(u).hostname.toLowerCase();
+    if(/(^|\.)jina\.ai$|google\.|bing\.|duckduckgo\.|search\.brave\.|search\.yahoo\.|yahoo\./i.test(host)) return;
+    if(seen.has(u)) return;
+    seen.add(u); out.push({url:u,title:String(title||"").replace(/\s+/g," ").trim().slice(0,220)});
+  };
+  // Markdown links returned by Jina Reader.
+  const md=/\[([^\]]{2,300})\]\((https?:\/\/[^\s)]+)\)/g; let m;
+  while((m=md.exec(String(txt||""))) && out.length<40) add(m[2],m[1]);
+  // HTML anchors, in case the search engine response is not converted to Markdown.
+  const ah=/<a[^>]+href=["'](https?:\/\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  while((m=ah.exec(String(txt||""))) && out.length<40){
+    const title=m[2].replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim(); add(m[1],title);
   }
+  // Bare URLs as final fallback.
   const re=/(https?:\/\/[^\s<>"'\]\)]+)/g;
-  while((m=re.exec(txt)) && out.length<20){
-    let u=m[1].replace(/[),.;]+$/g,"");
-    if(/(google\.|bing\.|duckduckgo\.|jina\.ai)/i.test(u)) continue;
-    if(!out.some(x=>x.url===u)) out.push({url:u,title:""});
-  }
+  while((m=re.exec(String(txt||""))) && out.length<40) add(m[1],"");
   return out;
 }
 function ventanaConSeñal(txt){
-  const t=norm(txt);
-  const claves=["fabricad","manufactur","made in","produced","factory","fabrica","envasad","embotell","bottled","production plant","production facility","planta de produccion","planta de fabricacion","planta de envasado","fabricado en"];
-  let ventanas=[];
+  const t=norm(txt), ventanas=[];
+  const claves=["fabricad","manufactur","made in","produced","factory","fabrica","envasad","embotell","bottled","production plant","production facility","production site","manufacturing site","manufacturing facility","planta de produccion","planta de fabricacion","planta de envasado","fabricado en","producido en","manufactured in","manufactured by","produced by"];
   for(const k of claves){
-    let pos=0;
-    while((pos=t.indexOf(norm(k),pos))!==-1){ ventanas.push(t.slice(Math.max(0,pos-500),Math.min(t.length,pos+900))); pos+=norm(k).length; if(ventanas.length>=12) break; }
-    if(ventanas.length>=12) break;
+    let pos=0, nk=norm(k);
+    while((pos=t.indexOf(nk,pos))!==-1){
+      ventanas.push(t.slice(Math.max(0,pos-700),Math.min(t.length,pos+1200)));
+      pos+=nk.length;
+      if(ventanas.length>=20) break;
+    }
+    if(ventanas.length>=20) break;
   }
   return ventanas;
 }
 function extraerEmpresaWeb(txt){
   const original=String(txt||"");
   const patrones=[
-    /(?:fabricante|fabricado por|manufacturer|manufactured by|empresa propietaria|owner of the brand|propietaria de la marca)[^\n:.]{0,80}[:\-]?\s*([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑ0-9&.,'()\- ]{2,80}(?:S\.?A\.?|S\.?L\.?U?\.?|LTD\.?|LIMITED|INC\.?|CORP\.?)?)/i,
-    /([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑ0-9&.,'()\- ]{2,80}(?:S\.?A\.?|S\.?L\.?U?\.?|LTD\.?|LIMITED|INC\.?|CORP\.?)?)\s*\((?:Don Palillo|[^)]{2,40})\)/i
+    /(?:fabricante|fabricado por|manufacturer|manufactured by|manufacturered by|empresa propietaria|propietaria de la marca|made by|produced by)[^\n:.]{0,100}[:\-]?\s*([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑ0-9&.,'()\- ]{2,100}(?:S\.?A\.?|S\.?L\.?U?\.?|LTD\.?|LIMITED|INC\.?|CORP\.?|PLC)?)/i,
+    /([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑ0-9&.,'()\- ]{2,100}(?:S\.?A\.?|S\.?L\.?U?\.?|LTD\.?|LIMITED|INC\.?|CORP\.?|PLC)?)\s*\((?:Don Palillo|[^)]{2,60})\)/i
   ];
   for(const re of patrones){ const m=original.match(re); if(m&&m[1]) return m[1].replace(/\s+/g," ").trim(); }
   return "";
 }
-function puntuarPaisEnVentanas(txt,nombre,marca){
+function puntuarPaisEnVentanas(txt,nombre,marca,codigo){
   const ventanas=ventanaConSeñal(txt), resultados=[];
   for(const v of ventanas){
     const paises=paisesEnTextoWeb(v);
     for(const pais of paises){
       let score=2;
-      if(norm(v).includes(norm(marca||""))) score+=3;
-      if(norm(v).includes(norm(nombre||""))) score+=2;
+      const tv=norm(v);
+      if(marca && tv.includes(norm(marca))) score+=4;
+      if(nombre && tv.includes(norm(nombre))) score+=3;
+      if(codigo && tv.includes(norm(codigo))) score+=4;
+      if(/(?:fabricad|manufactur|made in|produced|envasad|embotell)/i.test(tv)) score+=1;
       resultados.push({pais,score,ventana:v});
     }
   }
   resultados.sort((a,b)=>b.score-a.score);
   return resultados;
 }
-async function leerUrlJina(url,timeoutMs=9000){
+async function leerUrlJina(url,timeoutMs=10000){
   const ac=new AbortController(), t=setTimeout(()=>ac.abort(),timeoutMs);
   try{
     const r=await fetch("https://r.jina.ai/"+url,{signal:ac.signal,headers:{"Accept":"text/plain"}});
     if(!r.ok) return "";
-    return (await r.text()).slice(0,150000);
+    return (await r.text()).slice(0,180000);
   }catch(e){ return ""; } finally{clearTimeout(t);}
 }
-async function buscarMotorJina(url,timeoutMs=9000){ return leerUrlJina(url,timeoutMs); }
+async function buscarMotorJina(url,timeoutMs=10000){ return leerUrlJina(url,timeoutMs); }
 
 async function buscarEvidenciaFabricanteWeb(codigo,nombre,marca){
-  if(!nombre && !marca) return null;
+  if(!nombre && !marca && !codigo) return null;
+  const identidad=[marca,nombre].filter(Boolean).join(" ").trim();
   const consultas=[
-    '"'+(codigo||"")+'" '+[marca,nombre].filter(Boolean).join(" ")+" fabricante fabricación envasado",
-    '"'+[marca,nombre].filter(Boolean).join(" ")+ '" fabricante factory manufactured made in',
-    '"'+(marca||nombre||"")+'" "'+(nombre||"")+'" fabricante planta producción'
-  ];
+    '"'+(codigo||"")+'" '+identidad+' fabricante fábrica fabricación envasado',
+    '"'+(codigo||"")+'" '+identidad+' manufacturer factory manufactured made in',
+    '"'+identidad+'" fabricante planta producción',
+    '"'+identidad+'" fabricado en fabricante',
+    '"'+identidad+'" factory manufacturer production plant',
+    '"'+(nombre||"")+'" "'+(marca||"")+'" país origen fabricante'
+  ].filter(q=>q.replace(/[" ]/g,"").length>8);
   const motores=[
     q=>"https://r.jina.ai/https://www.google.com/search?q="+encodeURIComponent(q),
+    q=>"https://r.jina.ai/http://www.google.com/search?q="+encodeURIComponent(q),
     q=>"https://r.jina.ai/https://www.bing.com/search?q="+encodeURIComponent(q),
+    q=>"https://r.jina.ai/https://search.brave.com/search?q="+encodeURIComponent(q),
+    q=>"https://r.jina.ai/https://search.yahoo.com/search?p="+encodeURIComponent(q),
     q=>"https://r.jina.ai/https://html.duckduckgo.com/html/?q="+encodeURIComponent(q)
   ];
-  const bloques=[];
-  // No dependemos de un solo buscador: si uno falla, los demás pueden aportar resultados.
-  const respuestas=await Promise.all(consultas.flatMap(q=>motores.map(m=>buscarMotorJina(m(q),9000))));
-  respuestas.forEach((txt,i)=>{ if(txt) bloques.push({txt,consulta:consultas[Math.floor(i/motores.length)]}); });
+  const respuestas=[];
+  // Ejecutamos varias combinaciones pero limitamos para no castigar los servicios gratuitos.
+  for(const q of consultas){
+    const batch=await Promise.all(motores.slice(0,4).map(m=>buscarMotorJina(m(q),10000)));
+    batch.forEach((txt,i)=>{ if(txt) respuestas.push({txt,consulta:q,motor:i}); });
+    if(respuestas.length>=8) break;
+  }
   const candidatos=[];
-  for(const b of bloques){
+  for(const b of respuestas){
     for(const r of extraerResultadosBusquedaJina(b.txt)){
-      const prioridad=esDominioRelacionado(r.url,nombre,marca)?100:(dominioPareceOficial(r.url,nombre,marca)?40:0);
       const texto=norm((r.title||"")+" "+r.url);
-      const relacion=(marca&&texto.includes(norm(marca))?20:0)+(nombre&&texto.includes(norm(nombre))?15:0);
-      const obj={...r,score:prioridad+relacion};
-      if(!candidatos.some(x=>x.url===obj.url)) candidatos.push(obj); else {
-        const ex=candidatos.find(x=>x.url===obj.url); ex.score=Math.max(ex.score,obj.score);
-      }
+      let score=0;
+      if(esDominioRelacionado(r.url,nombre,marca)) score+=100;
+      if(dominioPareceOficial(r.url,nombre,marca)) score+=50;
+      if(marca && texto.includes(norm(marca))) score+=25;
+      if(nombre && texto.includes(norm(nombre))) score+=20;
+      if(codigo && texto.includes(norm(codigo))) score+=35;
+      if(/fabric|factory|manufacturer|produccion|producción|envas|plant/i.test(texto)) score+=10;
+      if(!candidatos.some(x=>x.url===r.url)) candidatos.push({...r,score});
+      else { const ex=candidatos.find(x=>x.url===r.url); ex.score=Math.max(ex.score,score); }
     }
   }
   candidatos.sort((a,b)=>b.score-a.score);
-  const lista=candidatos.slice(0,8);
-  const evidencias=[];
+  const lista=candidatos.slice(0,12), evidencias=[];
   for(const c of lista){
-    const pagina=await leerUrlJina(c.url,9000);
+    const pagina=await leerUrlJina(c.url,10000);
     if(!pagina) continue;
     const t=norm(pagina);
-    const relacionMarca=!marca || t.includes(norm(marca));
-    const relacionNombre=!nombre || t.includes(norm(nombre));
+    const relacionMarca=marca && t.includes(norm(marca));
+    const relacionNombre=nombre && t.includes(norm(nombre));
+    const relacionCodigo=codigo && t.includes(norm(codigo));
     const señales=señalesFabricacionWeb(pagina);
-    if(señales<1 || (!relacionMarca && !relacionNombre)) continue;
-    const paises=puntuarPaisEnVentanas(pagina,nombre,marca);
+    if(señales<1 || (!relacionMarca && !relacionNombre && !relacionCodigo)) continue;
+    const paises=puntuarPaisEnVentanas(pagina,nombre,marca,codigo);
     if(!paises.length) continue;
     const top=paises[0];
-    const oficial=esDominioRelacionado(c.url,nombre,marca);
-    const exacto=c.url && (pagina.includes(String(codigo||"")) || t.includes(norm(codigo||"")));
-    const nivel=(oficial && (top.score>=4 || exacto) && señales>=2)?"confirmado":"deducido";
+    const oficial=esDominioRelacionado(c.url,nombre,marca) || dominioPareceOficial(c.url,nombre,marca);
+    const nivel=(oficial && (top.score>=6 || relacionCodigo) && señales>=2)?"confirmado":"deducido";
     const empresa=extraerEmpresaWeb(pagina);
     evidencias.push({
-      pais:top.pais,nivel,fuente:oficial?"Web · fabricante/marca oficial":"Web · fuente relacionada",
-      detalle:"La página contiene referencias vinculadas al producto/marca y términos de fabricación, producción o envasado cerca del país indicado.",
-      url:c.url,lugar:null,empresa:empresa||"",score:top.score+(oficial?5:0)+(exacto?4:0)
+      pais:top.pais,nivel,
+      fuente:oficial?"Web · fabricante/marca oficial":"Web · fuente relacionada",
+      detalle:"Se encontraron referencias de fabricación, producción o envasado vinculadas al producto/marca y al país indicado.",
+      url:c.url,lugar:null,empresa:empresa||"",score:top.score+(oficial?10:0)+(relacionCodigo?8:0)+(relacionNombre?4:0)
     });
   }
   if(!evidencias.length) return null;
   evidencias.sort((a,b)=>b.score-a.score);
   const mejor=evidencias[0];
-  // Solo devolvemos una evidencia con suficiente relación. Las coincidencias débiles no pasan.
-  if(mejor.nivel==="deducido" && mejor.score<4) return null;
+  // Deducir solo con varias señales: nunca por la mera aparición de un país.
+  if(mejor.nivel==="deducido" && mejor.score<7) return null;
   delete mejor.score;
   return mejor;
 }
@@ -799,7 +827,7 @@ function pintar(){
   guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1");
 }
 
-if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
+if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js?v=20260920-websearch-v2").catch(()=>{}); }
 const btn = document.getElementById("btn");
 const estadoEscaneo = document.getElementById("estadoEscaneo");
 let scanner, activo=false, ultimo="";
