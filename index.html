@@ -648,9 +648,15 @@ function pintar(){
   const origenGS1=gs1&&gs1.origen?gs1.origen:null;
   const origenTexto=info.ori||origenGS1||null;
   const paisOrigen=detectar(origenTexto||"");
-  const fabricadoES=norm(paisFab||"")==="españa";
-  const origenES=norm(paisOrigen||"")==="españa";
-  const fabricadoConfirmado=!!paisFab && info.prod && info.prod.nivel==="confirmado";
+  // Normalización muy estricta para evitar falsos "fuera de España" por acentos,
+  // espacios o variantes del nombre del país.
+  const esEspanaPais = v => {
+    const x=norm(v).replace(/[^a-z]/g,"");
+    return x==="espana" || x==="spain";
+  };
+  const fabricadoES=esEspanaPais(paisFab);
+  const origenES=esEspanaPais(paisOrigen);
+  const fabricadoConfirmado=!!paisFab && !!info.prod && info.prod.nivel==="confirmado";
   const nombre=info.nombre||"Producto no identificado";
 
   cuadro.className="";
@@ -662,7 +668,7 @@ function pintar(){
     veredicto="🇪🇸 PRODUCTO ESPAÑOL"; clase="ok";
   }else if(fabricadoConfirmado && fabricadoES){
     veredicto="🇪🇸 FABRICADO EN ESPAÑA"; clase="ok";
-  }else if(fabricadoConfirmado && !fabricadoES){
+  }else if(fabricadoConfirmado && paisFab && !fabricadoES){
     veredicto="🌍 FABRICADO FUERA DE ESPAÑA"; clase="mal";
   }else if(origenES){
     veredicto="🇪🇸 ORIGEN ESPAÑA · FABRICACIÓN NO CONFIRMADA"; clase="ok";
@@ -698,7 +704,7 @@ function pintar(){
   guardar(codigo,paisPrefijo||"Desconocido",veredicto);
 }
 
-if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js?v=20260920-origen-v3").catch(()=>{}); }
+if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js?v=20260920-final-v4").catch(()=>{}); }
 const btn = document.getElementById("btn");
 const estadoEscaneo = document.getElementById("estadoEscaneo");
 let scanner, activo=false;
