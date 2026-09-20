@@ -328,32 +328,6 @@ function detectar(texto){
   }
   return mejor;
 }
-
-// Busca una declaración de fabricación en los datos enriquecidos de Open Food Facts.
-// No confunde el origen de ingredientes con el lugar donde se fabricó.
-function paisFabricacionDePaneles(panels){
-  let encontrado=null;
-  function recorrer(v, contexto=""){
-    if(encontrado || v==null) return;
-    if(typeof v==="string"){
-      const c=norm(contexto);
-      if(/manufactur|fabric|producc|fabricacion|manufacturing/.test(c)){
-        const p=detectar(v);
-        if(p) encontrado={pais:p,detalle:v};
-      }
-      return;
-    }
-    if(Array.isArray(v)){ v.forEach(x=>recorrer(x,contexto)); return; }
-    if(typeof v==="object"){
-      for(const [k,val] of Object.entries(v)){
-        recorrer(val, contexto+" "+k);
-      }
-    }
-  }
-  recorrer(panels);
-  return encontrado;
-}
-
 // Código de envasador/sanitario de la UE: "ES 10.02547/H CE", "FR 35.123.001 CE", "EMB 35123"
 function deEmb(texto){
   const t=String(texto||"").toUpperCase();
@@ -378,95 +352,6 @@ function paisDeTags(tags){
     if(p && p!=="Unión Europea") return p;
   }
   return null;
-}
-
-
-// Investigación web automática del producto.
-// Se usa cuando las bases de productos no aportan un lugar de fabricación claro.
-// La búsqueda intenta relacionar código + producto + marca con expresiones como
-// "fabricado", "producido", "elaborado", "envasado" o "planta/fábrica".
-function webTextoLimpio(v){
-  return String(v||"").replace(/\s+/g," ").trim();
-}
-function webTokens(texto){
-  return norm(texto).split(/[^a-z0-9]+/).filter(x=>x.length>=3);
-}
-function esUrlUtil(u){
-  try{
-    const x=new URL(u);
-    if(!/^https?:$/.test(x.protocol)) return false;
-    const h=x.hostname.toLowerCase();
-    return !/(google\.|bing\.|duckduckgo\.|facebook\.|instagram\.|tiktok\.|youtube\.|twitter\.|x\.com$)/.test(h);
-  }catch(e){return false;}
-}
-function extraerLinksBusqueda(txt){
-  const out=[];
-  const re=/\[[^\]]{3,180}\]\((https?:\/\/[^)\s]+)\)/g;
-  let m;
-  while((m=re.exec(txt||""))){
-    const u=m[1].replace(/[),.;]+$/g,"");
-    if(esUrlUtil(u) && !out.includes(u)) out.push(u);
-  }
-  // Algunos buscadores devueltos por Jina muestran URLs en texto plano.
-  const re2=/(https?:\/\/[^\s)<>"']+)/g;
-  while((m=re2.exec(txt||""))){
-    const u=m[1].replace(/[),.;]+$/g,"");
-    if(esUrlUtil(u) && !out.includes(u)) out.push(u);
-  }
-  return out.slice(0,8);
-}
-function puntuacionWeb(texto,nombre,marca,codigo){
-  const t=norm(texto), nt=webTokens(nombre), mt=webTokens(marca);
-  let score=0;
-  if(codigo && t.includes(String(codigo))) score+=12;
-  score += nt.slice(0,6).filter(x=>t.includes(x)).length*3;
-  score += mt.slice(0,4).filter(x=>t.includes(x)).length*2;
-  if(/fabricad|manufactur|producc|producid|elaborad|envasad|embotell|planta|fabrica|factory|made in|bottl/.test(t)) score+=8;
-  return score;
-}
-function extraerFraseFabricacion(texto,nombre,marca){
-  const limpio=webTextoLimpio(texto);
-  const partes=limpio.split(/(?<=[.!?;])\s+/);
-  const claves=/fabricad|manufactur|producc|producid|elaborad|envasad|embotell|planta|fabrica|factory|made in|bottl/i;
-  const relevantes=partes.filter(x=>claves.test(x) && puntuacionWeb(x,nombre,marca,"")>=5);
-  return (relevantes[0]||partes.find(x=>claves.test(x))||"").slice(0,420);
-}
-async function fetchConTiempo(url,ms=6500){
-  const ac=new AbortController(), t=setTimeout(()=>ac.abort(),ms);
-  try{
-    const r=await fetch(url,{signal:ac.signal,headers:{"Accept":"text/plain,text/html,*/*"}});
-    if(!r.ok) return "";
-    return await r.text();
-  }catch(e){return "";}finally{clearTimeout(t);}
-}
-async function investigarFabricacionWeb(codigo,nombre,marca){
-  if(!nombre && !marca) return null;
-  const q1=encodeURIComponent([codigo,nombre,marca,"fabricación fábrica envasado España"].filter(Boolean).join(" "));
-  const q2=encodeURIComponent([nombre,marca,"dónde se fabrica", "planta", "envasado"].filter(Boolean).join(" "));
-  const motores=[
-    "https://r.jina.ai/https://html.duckduckgo.com/html/?q="+q1,
-    "https://r.jina.ai/https://www.google.com/search?q="+q2
-  ];
-  const resultados=await Promise.all(motores.map(u=>fetchConTiempo(u,5500)));
-  const links=[];
-  resultados.forEach(txt=>extraerLinksBusqueda(txt).forEach(u=>{if(!links.includes(u))links.push(u);}));
-  // Solo leemos dos páginas para no hacer lenta la app.
-  const paginas=await Promise.all(links.slice(0,2).map(u=>fetchConTiempo("https://r.jina.ai/"+u,6500)));
-  let mejor=null;
-  paginas.forEach((txt,i)=>{
-    if(!txt) return;
-    const score=puntuacionWeb(txt,nombre,marca,codigo);
-    const frase=extraerFraseFabricacion(txt,nombre,marca);
-    const pais=detectar(txt);
-    if(!frase || !pais || score<8) return;
-    const url=links[i];
-    const oficial=/\.(es|com|org|net)(\/|$)/i.test(url||"") && !/(amazon|carrefour|ebay|aliexpress|wikipedia)/i.test(url||"");
-    const total=score+(oficial?4:0)+(String(url).match(/sanbenedetto|cuetara|mercadona|danone|coca-cola|nestle/i)?6:0);
-    if(!mejor || total>mejor._score){
-      mejor={pais,nivel:"confirmado",fuente:"Investigación web del producto",detalle:frase,fuenteUrl:url,_score:total};
-    }
-  });
-  return mejor;
 }
 
 async function buscarProducto(codigo){
@@ -506,28 +391,15 @@ async function buscarProducto(codigo){
 
   let evidencias=[];
   let p;
-
-  // 0) Evidencia verificada por código. Tiene prioridad sobre la ausencia
-  // de datos en las bases públicas, pero no altera ninguna otra función.
-  const verificada=FABRICACION_VERIFICADA[String(codigo).replace(/\D/g,"")];
-  if(verificada) evidencias.push({...verificada});
-
   // 1) Declaración directa: es la evidencia más fuerte.
   if((p=detectar(fab))) evidencias.push({pais:p,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:fab});
   else if((p=paisDeTags(fabTags))) evidencias.push({pais:p,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:Array.isArray(fabTags)?fabTags.join(", "):String(fabTags)});
   else if(fab && String(fab).trim()) evidencias.push({pais:null,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:String(fab)});
 
-  // 2) Panel enriquecido de Open Food Facts: puede aportar el lugar de fabricación
-  // cuando ha sido obtenido a partir de datos de trazabilidad/establecimiento.
-  if(!evidencias.length){
-    const fp=paisFabricacionDePaneles(panels);
-    if(fp) evidencias.push({pais:fp.pais,nivel:"confirmado",fuente:"Panel de fabricación de Open Food Facts",detalle:fp.detalle});
-  }
-
-  // 3) Etiquetas made-in: evidencia asociada, no equivalente a una declaración libre.
+  // 2) Etiquetas made-in: evidencia asociada, no equivalente a una declaración libre.
   if(!evidencias.length && (p=deEtiqueta(labels))) evidencias.push({pais:p,nivel:"asociado",fuente:"Etiqueta de fabricación/origen del producto",detalle:String(labels)});
 
-  // 4) Código sanitario europeo: sus dos letras identifican el país del establecimiento.
+  // 3) Código sanitario europeo: sus dos letras identifican el país del establecimiento.
   const sanitario=String(emb||embOrig||"");
   const sm=sanitario.match(/(?:^|[^A-Z])([A-Z]{2})\s?\d[\d.]*\s*(?:CE)?/i);
   if(sm && EMB[sm[1].toUpperCase()]){
@@ -535,7 +407,7 @@ async function buscarProducto(codigo){
     evidencias.push({pais:ep,nivel:"asociado",fuente:"Estampilla sanitaria / código de establecimiento",detalle:sanitario});
   }
 
-  // 5) EMB francés: es un código geográfico de una empresa de envasado/condicionado.
+  // 4) EMB francés: es un código geográfico de una empresa de envasado/condicionado.
   // No lo llamamos automáticamente "fabricación": puede ser fabricante, importador o envasador.
   const em=String(emb||embOrig||"").match(/(?:^|[^A-Z])EMB\s*([0-9]{5})([A-Z]?)/i);
   let embInfo=null;
@@ -544,28 +416,20 @@ async function buscarProducto(codigo){
     evidencias.push(embInfo);
   }
 
-  // 6) Ciudad/país explícito en los tags de fabricación.
+  // 5) Ciudad/país explícito en los tags de fabricación.
   if(!evidencias.length && Array.isArray(fabTags)){
     const raw=fabTags.map(x=>String(x)).join(" ");
     if((p=detectar(raw))) evidencias.push({pais:p,nivel:"confirmado",fuente:"Etiquetas del lugar de fabricación",detalle:raw});
   }
 
-  // 7) Datos de empresa: sirven como pista, pero nunca se presentan como fabricación confirmada.
+  // 6) Datos de empresa: sirven como pista, pero nunca se presentan como fabricación confirmada.
   const empresaTexto=[customer,producer].filter(Boolean).join(" | ");
   const paisEmpresa=detectar(empresaTexto);
   if(paisEmpresa) evidencias.push({pais:paisEmpresa,nivel:"asociado",fuente:"Dirección/datos de empresa del producto",detalle:empresaTexto});
 
-  // 8) Si todavía no hay fabricación confirmada, hacemos una pequeña investigación web
-  // usando el código + nombre + marca. Es el equivalente automático a buscar el producto
-  // y contrastar páginas de fabricantes, plantas y envasadores.
-  if(!evidencias.some(x=>x.pais && x.nivel==="confirmado")){
-    const web=await investigarFabricacionWeb(codigo,nombre,marca);
-    if(web) evidencias.push(web);
-  }
-
   // Elegimos la evidencia de mayor calidad. Directa > asociada.
   const prioridad={confirmado:3,asociado:2};
-  evidencias.sort((a,b)=>((prioridad[b.nivel]||0)-(prioridad[a.nivel]||0))||((b._score||0)-(a._score||0)));
+  evidencias.sort((a,b)=>(prioridad[b.nivel]||0)-(prioridad[a.nivel]||0));
   const prod=evidencias.find(x=>x.pais)||null;
 
   let envasado=null;
