@@ -342,6 +342,17 @@ function deEtiqueta(tags){
   return null;
 }
 
+function paisDeTags(tags){
+  if(!Array.isArray(tags)) return null;
+  for(const tag of tags){
+    const raw=String(tag||"").toLowerCase();
+    const limpio=raw.replace(/^([a-z]{2}):/i,"").replace(/^made-in-/,"").replace(/-/g," ");
+    const p=detectar(limpio);
+    if(p && p!=="Unión Europea") return p;
+  }
+  return null;
+}
+
 async function buscarProducto(codigo){
   const bases = ["openfoodfacts","openbeautyfacts","openproductsfacts"];
   const campos="product_name,brands,manufacturing_places,manufacturing_places_tags,origins,origins_tags,labels_tags";
@@ -418,6 +429,7 @@ function pintar(){
   }
   if(info.fab) html+="<br>📍 Lugar registrado: "+esc(info.fab);
   if(info.ori) html+="<br>🌾 Origen declarado: "+esc(info.ori);
+
   $("fabrica").innerHTML=html;
   if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia();
   const detalle=tieneFabricacion?(norm(paisPrefijo)===norm(paisFab)?"El producto figura como fabricado en "+paisFab:paisPrefijo+" es el país del prefijo GS1, pero el producto figura como fabricado en "+paisFab):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no hay datos suficientes para saber dónde se fabricó.";
