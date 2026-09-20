@@ -49,7 +49,6 @@
   <div id="frase" style="font-size:1.4rem;font-weight:bold;margin:8px 0"></div>
   <div id="pais"></div>
   <div id="fabricadoEn" style="margin:10px 0;font-size:1.15rem;font-weight:bold"></div>
-  <div id="precio" style="margin:10px 0;font-size:1.15rem;font-weight:bold"></div>
   <div id="fabrica" style="margin:10px 0;font-size:1.1rem"></div>
   <small id="origen"></small>
    <div style="margin-top:10px;font-size:.78rem;color:#5a4200">
@@ -343,51 +342,6 @@ function deEtiqueta(tags){
   return null;
 }
 
-async function buscarPrecio(codigo){
-  // Open Prices: consulta pública por código de producto.
-  // La API devuelve los precios en "items" y permite ordenar por fecha.
-  const urls = [
-    "https://prices.openfoodfacts.org/api/v1/prices?product_code="+encodeURIComponent(codigo)+"&size=50&order_by=-date",
-    "https://prices.openfoodfacts.org/api/v1/prices?product_code="+encodeURIComponent(codigo)+"&size=50"
-  ];
-  for(const url of urls){
-    try{
-      const ac=new AbortController();
-      const t=setTimeout(()=>ac.abort(),8000);
-      try{
-        const r=await fetch(url,{signal:ac.signal,headers:{"Accept":"application/json"}});
-        if(!r.ok) continue;
-        const d=await r.json();
-        const lista=Array.isArray(d)?d:(d.items||d.results||[]);
-        const valid=lista.filter(x=>x && x.price!=null && Number.isFinite(Number(x.price)) && Number(x.price)>=0);
-        if(!valid.length) continue;
-        valid.sort((a,b)=>String(b.date||b.created||"").localeCompare(String(a.date||a.created||"")));
-        const x=valid[0];
-        return {
-          price:Number(x.price),
-          currency:x.currency||"EUR",
-          date:x.date||null,
-          location:x.location?.osm_display_name || x.location?.osm_address_city || x.location_id || null,
-          store:x.location?.osm_brand || x.location?.osm_name || null,
-          discounted:!!x.price_is_discounted
-        };
-      }finally{clearTimeout(t)}
-    }catch(e){}
-  }
-  return null;
-}
-
-function paisDeTags(tags){
-  if(!Array.isArray(tags)) return null;
-  for(const tag of tags){
-    const raw=String(tag||"").toLowerCase();
-    const limpio=raw.replace(/^([a-z]{2}):/i,"").replace(/^made-in-/,"").replace(/-/g," ");
-    const p=detectar(limpio);
-    if(p && p!=="Unión Europea") return p;
-  }
-  return null;
-}
-
 async function buscarProducto(codigo){
   const bases = ["openfoodfacts","openbeautyfacts","openproductsfacts"];
   const campos="product_name,brands,manufacturing_places,manufacturing_places_tags,origins,origins_tags,labels_tags";
@@ -419,8 +373,7 @@ async function buscarProducto(codigo){
   else if((p = paisDeTags(fabTags))) prod = {pais:p, fuente:"Open Food Facts · lugar de fabricación"};
   else if((p = deEtiqueta(labels))) prod = {pais:p, fuente:"Open Food Facts · etiqueta de origen"};
 
-  const precio=await buscarPrecio(codigo);
-  return {nombre, fab, ori, prod, precio};
+  return {nombre, fab, ori, prod};
 }
 
 // País guardado en el móvil para un código (por ejemplo, leído de la etiqueta)
@@ -434,7 +387,7 @@ async function mostrar(codigo){
   const prefijo = paisDe(codigo);
   const cuadro = $("resultado"); cuadro.style.display="block"; cuadro.className=""; actual=null;
   $("codigo").textContent="Código: "+codigo;
-  $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("precio").textContent="💰 Buscando precio...";
+  $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent="";
   if(!prefijo){ $("pais").textContent="Código no válido"; hablar("Código no válido"); return; }
   $("pais").textContent="🔎 Consultando información del producto...";
   const info=await buscarProducto(codigo); actual={codigo,prefijo,info}; pintar();
@@ -465,15 +418,6 @@ function pintar(){
   }
   if(info.fab) html+="<br>📍 Lugar registrado: "+esc(info.fab);
   if(info.ori) html+="<br>🌾 Origen declarado: "+esc(info.ori);
-  if(info.precio){
-    const simbolo=info.precio.currency==="EUR"?"€":info.precio.currency;
-    const fecha=info.precio.date?" · dato de "+esc(info.precio.date):"";
-    const lugar=info.precio.store||info.precio.location?" · "+esc(info.precio.store||info.precio.location):"";
-    const rebaja=info.precio.discounted?" · oferta":"";
-    $("precio").innerHTML="💰 <b>Precio registrado: "+info.precio.price.toFixed(2)+" "+esc(simbolo)+"</b><small>"+rebaja+fecha+lugar+"</small>";
-  }else{
-    $("precio").innerHTML="💰 <b>Precio: no disponible</b><small>No hay un precio registrado para este código en Open Prices.</small>";
-  }
   $("fabrica").innerHTML=html;
   if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia();
   const detalle=tieneFabricacion?(norm(paisPrefijo)===norm(paisFab)?"El producto figura como fabricado en "+paisFab:paisPrefijo+" es el país del prefijo GS1, pero el producto figura como fabricado en "+paisFab):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no hay datos suficientes para saber dónde se fabricó.";
