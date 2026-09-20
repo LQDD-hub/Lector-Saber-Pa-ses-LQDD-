@@ -344,41 +344,81 @@ function deEtiqueta(tags){
 }
 
 async function buscarPrecio(codigo){
-  try{
-    const ac=new AbortController();
-    const t=setTimeout(()=>ac.abort(),5000);
+  // Open Prices: consulta pública por código de producto.
+  // La API devuelve los precios en "items" y permite ordenar por fecha.
+  const urls = [
+    "https://prices.openfoodfacts.org/api/v1/prices?product_code="+encodeURIComponent(codigo)+"&size=50&order_by=-date",
+    "https://prices.openfoodfacts.org/api/v1/prices?product_code="+encodeURIComponent(codigo)+"&size=50"
+  ];
+  for(const url of urls){
     try{
-      const r=await fetch("https://prices.openfoodfacts.org/api/v1/prices?product_code="+encodeURIComponent(codigo)+"&page_size=20",{signal:ac.signal,headers:{"Accept":"application/json"}});
-      if(!r.ok) return null;
-      const d=await r.json();
-      const lista=Array.isArray(d)?d:(d.results||d.items||[]);
-      const valid=lista.filter(x=>x && x.price!=null && Number.isFinite(Number(x.price)));
-      if(!valid.length) return null;
-      valid.sort((a,b)=>String(b.date||b.created||"").localeCompare(String(a.date||a.created||"")));
-      const x=valid[0];
-      return {price:Number(x.price),currency:x.currency||"EUR",date:x.date||null,location:x.location_id||null,discounted:!!x.price_is_discounted};
-    }finally{clearTimeout(t)}
-  }catch(e){return null}
+      const ac=new AbortController();
+      const t=setTimeout(()=>ac.abort(),8000);
+      try{
+        const r=await fetch(url,{signal:ac.signal,headers:{"Accept":"application/json"}});
+        if(!r.ok) continue;
+        const d=await r.json();
+        const lista=Array.isArray(d)?d:(d.items||d.results||[]);
+        const valid=lista.filter(x=>x && x.price!=null && Number.isFinite(Number(x.price)) && Number(x.price)>=0);
+        if(!valid.length) continue;
+        valid.sort((a,b)=>String(b.date||b.created||"").localeCompare(String(a.date||a.created||"")));
+        const x=valid[0];
+        return {
+          price:Number(x.price),
+          currency:x.currency||"EUR",
+          date:x.date||null,
+          location:x.location?.osm_display_name || x.location?.osm_address_city || x.location_id || null,
+          store:x.location?.osm_brand || x.location?.osm_name || null,
+          discounted:!!x.price_is_discounted
+        };
+      }finally{clearTimeout(t)}
+    }catch(e){}
+  }
+  return null;
+}
+
+function paisDeTags(tags){
+  if(!Array.isArray(tags)) return null;
+  for(const tag of tags){
+    const raw=String(tag||"").toLowerCase();
+    const limpio=raw.replace(/^([a-z]{2}):/i,"").replace(/^made-in-/,"").replace(/-/g," ");
+    const p=detectar(limpio);
+    if(p && p!=="Unión Europea") return p;
+  }
+  return null;
 }
 
 async function buscarProducto(codigo){
   const bases = ["openfoodfacts","openbeautyfacts","openproductsfacts"];
+  const campos="product_name,brands,manufacturing_places,manufacturing_places_tags,origins,origins_tags,labels_tags";
   const res = await Promise.all(bases.map(async b => {
     const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 5000);
+    const t = setTimeout(() => ac.abort(), 7000);
     try{
-      const r = await fetch("https://world."+b+".org/api/v2/product/"+codigo+".json?fields=product_name,manufacturing_places,manufacturing_places_tags,origins,labels_tags", {signal: ac.signal});
+      // v3 es la API actual recomendada por Open Food Facts.
+      const r = await fetch("https://world."+b+".org/api/v3/product/"+encodeURIComponent(codigo)+"?fields="+encodeURIComponent(campos), {signal: ac.signal});
+      if(!r.ok) return null;
       const d = await r.json();
-      return d.status === 1 ? d.product : null;
+      return d && d.product ? d.product : null;
     }catch(e){ return null; }
     finally{ clearTimeout(t); }
   }));
+
   const ps = res.filter(Boolean);
   const campo = c => ps.map(p => p[c]).find(v => v && (!Array.isArray(v) || v.length)) || "";
-  const nombre = campo("product_name"), fab = campo("manufacturing_places"), ori = campo("origins");
+  const nombre = campo("product_name");
+  const fab = campo("manufacturing_places");
+  const fabTags = campo("manufacturing_places_tags");
+  const labels = campo("labels_tags");
+  const ori = campo("origins");
+
+  // SOLO consideramos fabricación cuando la base de datos tiene un dato explícito
+  // de manufacturing_places / manufacturing_places_tags o una etiqueta made-in.
   let prod = null, p;
-  if((p = detectar(fab))) prod = {pais:p, fuente:"base de datos · lugar de fabricación"};
-  else if((p = deEtiqueta(campo("labels_tags")))) prod = {pais:p, fuente:"base de datos · información de origen"};
+  if((p = detectar(fab))) prod = {pais:p, fuente:"Open Food Facts · lugar de fabricación"};
+  else if((p = paisDeTags(fabTags))) prod = {pais:p, fuente:"Open Food Facts · lugar de fabricación"};
+  else if((p = deEtiqueta(labels))) prod = {pais:p, fuente:"Open Food Facts · etiqueta de origen"};
+
   const precio=await buscarPrecio(codigo);
   return {nombre, fab, ori, prod, precio};
 }
@@ -428,9 +468,11 @@ function pintar(){
   if(info.precio){
     const simbolo=info.precio.currency==="EUR"?"€":info.precio.currency;
     const fecha=info.precio.date?" · dato de "+esc(info.precio.date):"";
-    $("precio").innerHTML="💰 <b>Precio registrado: "+info.precio.price.toFixed(2)+" "+esc(simbolo)+"</b><small>"+fecha+"</small>";
+    const lugar=info.precio.store||info.precio.location?" · "+esc(info.precio.store||info.precio.location):"";
+    const rebaja=info.precio.discounted?" · oferta":"";
+    $("precio").innerHTML="💰 <b>Precio registrado: "+info.precio.price.toFixed(2)+" "+esc(simbolo)+"</b><small>"+rebaja+fecha+lugar+"</small>";
   }else{
-    $("precio").textContent="💰 Precio: no disponible";
+    $("precio").innerHTML="💰 <b>Precio: no disponible</b><small>No hay un precio registrado para este código en Open Prices.</small>";
   }
   $("fabrica").innerHTML=html;
   if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia();
