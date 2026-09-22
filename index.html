@@ -502,34 +502,91 @@ const espera=ms=>new Promise(r=>setTimeout(r,ms));
 function palabras(t){ return norm(t).split(/[^a-z0-9]+/).filter(w=>w.length>=3); }
 
 async function buscarEnWeb(a){
+  // IMPORTANTE: esta búsqueda se hace DENTRO de la aplicación.
+  // No abre Google, Bing ni ninguna página externa.
+  // Primero usamos Search-a-licious (búsqueda de texto completo de Open Food Facts)
+  // y después las bases abiertas de Food/Beauty/Products Facts como respaldo.
   const info=a.info;
   const marca=String(info.marca||"").split(",")[0].trim();
   const nombre=String(info.nombre||info.denominacion||"").trim();
   if(!marca && !nombre) return {error:"sin-datos"};
+
   const campos="code,product_name,brands,manufacturing_places,emb_codes,labels_tags";
-  const slug=norm(marca).replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"");
-  const termino=[marca,nombre].filter(Boolean).join(" ");
-  const urls=[];
-  for(const b of ["openfoodfacts","openbeautyfacts","openproductsfacts"]){
-    if(slug) urls.push("https://world."+b+".org/api/v2/search?brands_tags="+encodeURIComponent(slug)+"&fields="+campos+"&page_size=60");
-    urls.push("https://world."+b+".org/cgi/search.pl?action=process&json=1&search_simple=1&page_size=40&fields="+campos+"&search_terms="+encodeURIComponent(termino));
-  }
-  const resp=await Promise.all(urls.map(u=>pedirJSON(u,12000)));
+  const termino=[marca,nombre].filter(Boolean).join(" ").trim();
   const vistos=new Set([String(a.codigo)]), cand=[];
   const pn=palabras(nombre), mn=norm(marca);
+
+  // Convierte las respuestas de Search-a-licious al mismo formato
+  // que usamos para las otras bases de datos.
+  function normalizarHits(d){
+    const raw=(d&&d.hits&&Array.isArray(d.hits.hits)) ? d.hits.hits :
+              (d&&Array.isArray(d.hits)) ? d.hits :
+              (d&&Array.isArray(d.products)) ? d.products : [];
+    return raw.map(x=>x&&x._source?x._source:x).filter(Boolean);
+  }
+
+  // 1) Búsqueda de texto completo interna, sin sacar al usuario de la app.
+  const consultas=[];
+  if(termino) consultas.push(
+    "https://search.openfoodfacts.org/search?"+
+    "q="+encodeURIComponent(termino)+
+    "&langs=es,en,fr&fields="+encodeURIComponent(campos)+
+    "&page_size=60&page=1"
+  );
+  if(marca && nombre) consultas.push(
+    "https://search.openfoodfacts.org/search?"+
+    "q="+encodeURIComponent(marca)+
+    "&langs=es,en,fr&fields="+encodeURIComponent(campos)+
+    "&page_size=60&page=1"
+  );
+
+  const sr=await Promise.all(consultas.map(u=>pedirJSON(u,12000)));
+  for(const d of sr){
+    for(const p of normalizarHits(d)){
+      if(!p||!p.code||vistos.has(String(p.code))) continue;
+      vistos.add(String(p.code));
+      if(mn && !norm(p.brands).includes(mn)) continue;
+      const pw=palabras(p.product_name);
+      const comunes=pn.filter(w=>pw.includes(w)).length;
+      if(!mn && pn.length && comunes<2) continue;
+      cand.push({p,peso:comunes>=2?4:(mn?2:1)});
+    }
+  }
+
+  // 2) Respaldo con las bases abiertas que ya usaba la aplicación.
+  // No se abre ninguna web: solo se consultan datos JSON y se procesan aquí.
+  const slug=norm(marca).replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"");
+  const urls=[];
+  for(const b of ["openfoodfacts","openbeautyfacts","openproductsfacts"]){
+    if(slug) urls.push(
+      "https://world."+b+".org/api/v2/search?brands_tags="+
+      encodeURIComponent(slug)+"&fields="+encodeURIComponent(campos)+"&page_size=60"
+    );
+    if(termino) urls.push(
+      "https://world."+b+".org/cgi/search.pl?action=process&json=1&search_simple=1&"+
+      "page_size=40&fields="+encodeURIComponent(campos)+"&search_terms="+
+      encodeURIComponent(termino)
+    );
+  }
+  const resp=await Promise.all(urls.map(u=>pedirJSON(u,12000)));
   for(const d of resp){
     for(const p of ((d&&d.products)||[])){
       if(!p||!p.code||vistos.has(String(p.code))) continue;
       vistos.add(String(p.code));
-      if(mn && !norm(p.brands).includes(mn)) continue;      // misma marca
+      if(mn && !norm(p.brands).includes(mn)) continue;
       const pw=palabras(p.product_name);
       const comunes=pn.filter(w=>pw.includes(w)).length;
-      if(!mn && comunes<2) continue;                        // sin marca: exigimos nombre muy parecido
-      cand.push({p,peso:comunes>=2?3:1});                   // los de nombre parecido pesan más
+      if(!mn && comunes<2) continue;
+      cand.push({p,peso:comunes>=2?3:1});
     }
   }
+
   const votos={}, ejemplos=[], pendientes=[];
-  const sumar=(pais,c,txt)=>{ votos[pais]=(votos[pais]||0)+c.peso; if(ejemplos.length<4) ejemplos.push((c.p.product_name||c.p.code)+" → "+txt); };
+  const sumar=(pais,c,txt)=>{
+    votos[pais]=(votos[pais]||0)+c.peso;
+    if(ejemplos.length<4) ejemplos.push((c.p.product_name||c.p.code)+" → "+txt);
+  };
+
   for(const c of cand){
     const p=c.p, fab=String(p.manufacturing_places||"").trim();
     let pais=fab?detectar(fab):null;
@@ -538,7 +595,8 @@ async function buscarEnWeb(a){
     if(pais) sumar(pais,c,pais+(fab?" ("+fab+")":""));
     else if(fab) pendientes.push({c,fab});
   }
-  // Los lugares que son solo pueblo/ciudad: averiguamos su país (máx. 3 consultas, con pausa)
+
+  // Los lugares que son solo pueblo/ciudad: averiguamos su país.
   {
     const vf=new Set(); let n=0;
     for(const {c,fab} of pendientes){
@@ -550,12 +608,17 @@ async function buscarEnWeb(a){
       if(g) sumar(g.pais,c,g.pais+" ("+fab+")");
     }
   }
+
   const orden=Object.entries(votos).sort((x,y)=>y[1]-x[1]);
   if(!orden.length) return {error:cand.length?"sin-fabricacion":"sin-parecidos"};
   const pais=orden[0][0], otros=orden.slice(1).map(x=>x[0]);
-  return {pais,nivel:"asociado",fuente:"Búsqueda en la web: otros productos de la misma marca",
+  return {
+    pais,
+    nivel:"asociado",
+    fuente:"Búsqueda interna en bases web: otros productos de la misma marca",
     detalle:ejemplos.join(" · ")+(otros.length?" · También aparece: "+otros.join(", "):""),
-    voz:"Buscando en la web, otros productos de la misma marca se fabrican en "+pais+". Es una pista, no una confirmación"};
+    voz:"Buscando en las bases web desde la aplicación, otros productos de la misma marca se fabrican en "+pais+". Es una pista, no una confirmación"
+  };
 }
 
 let actual = null; // {codigo, prefijo, info}
@@ -733,7 +796,7 @@ document.getElementById("ok").onclick = () => mostrar(document.getElementById("m
 document.getElementById("buscaWeb").onclick = async () => {
   if(!actual) return;
   const b=$("buscaWeb"), msg=$("buscaMsg");
-  b.disabled=true; b.textContent="🔎 Buscando en la web..."; msg.textContent="";
+  b.disabled=true; b.textContent="🔎 Buscando dentro de la app..."; msg.textContent="";
   let r=null;
   try{ r=await buscarEnWeb(actual); }catch(e){ r={error:"fallo"}; }
   b.disabled=false; b.textContent="🔎 Buscar dónde se fabrica";
@@ -743,9 +806,9 @@ document.getElementById("buscaWeb").onclick = async () => {
     pintar(true);
   }else{
     const m={"sin-datos":"Este código no está en las bases de datos y no tengo ni marca ni nombre para buscarlo.",
-             "sin-parecidos":"No encontré otros productos de esa marca en las bases abiertas.",
-             "sin-fabricacion":"Encontré productos de esa marca, pero ninguno dice dónde se fabrica."};
-    msg.textContent="😕 "+(m[r&&r.error]||"No pude completar la búsqueda. Comprueba tu conexión.")+"";
+             "sin-parecidos":"No encontré otros productos de esa marca en las bases consultadas.",
+             "sin-fabricacion":"Encontré productos de esa marca, pero ninguno indica dónde se fabrica."};
+    msg.textContent="😕 "+(m[r&&r.error]||"No pude completar la búsqueda interna. Comprueba tu conexión.")+"";
   }
 };
 </script>
