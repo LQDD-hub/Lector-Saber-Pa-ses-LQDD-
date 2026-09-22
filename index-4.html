@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LQDD SCANNER</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#AA151B">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>
+  html{background:#F1BF00}
+  body{font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:16px;min-height:100vh;box-sizing:border-box;background:linear-gradient(#AA151B 0 112px,#F1BF00 112px);color:#2a1a00}
+  header.cab{display:flex;align-items:center;gap:12px;height:80px;margin:0 0 32px}
+  .cab img{width:76px;height:76px;flex:none;filter:drop-shadow(0 2px 4px rgba(0,0,0,.5))}
+  .cab h1{font-size:clamp(1.3rem,7vw,1.8rem);letter-spacing:.06em;white-space:nowrap;margin:0;line-height:1.1;color:#F1BF00;text-shadow:0 2px 4px rgba(0,0,0,.4)}
+  .cab p{margin:4px 0 0;font-size:.8rem;line-height:1.25;color:#fff}
+  #lector{width:100%;background:#000;border-radius:12px;overflow:hidden;min-height:60px}
+  button{width:100%;padding:12px;margin-top:10px;font-size:1rem;border:0;border-radius:10px;background:#AA151B;color:#F1BF00;font-weight:bold}
+  .fila{display:flex;gap:8px;margin-top:10px}
+  input{flex:1;padding:12px;font-size:1rem;border:1px solid #bbb;border-radius:10px}
+  .fila button{width:auto;margin:0}
+  #resultado{margin-top:16px;padding:16px;background:#fff;border-radius:12px;text-align:center;display:none;border:3px solid transparent}
+  #resultado.ok{background:#c9f5cf;border-color:#1e9e3a}
+  #resultado.mal{background:#ffd3d3;border-color:#d32f2f}
+  #pais{font-size:1.6rem;font-weight:bold;margin:6px 0}
+  small{color:#5a4200}
+  h2{font-size:1.1rem;margin:22px 0 6px;color:#7a0f14}
+  .item{background:#fff;border-radius:10px;padding:10px 12px;margin-top:6px;font-size:.95rem}
+  .item small{display:block}
+  #borrar{background:#6b4e00;color:#fff;padding:8px;font-size:.9rem}
+</style>
+</head>
+<body>
+<header class="cab">
+  <img src="icon-192.png" alt="LQDD" width="76" height="76">
+  <div><h1>SCANNER</h1><p>¿Te gustaría saber de qué país es?</p></div>
+</header>
+<div id="lector"></div>
+<div id="estadoEscaneo" style="margin:8px 0;text-align:center;font-size:.85rem;color:#5a4200">📷 Escanea el código para identificarlo</div>
+<button id="btn">Activar cámara</button>
+<button id="vozBtn" type="button" style="background:#6b4e00;color:#fff">🔊 Voz: ACTIVADA</button>
+<div class="fila">
+  <input id="manual" inputmode="numeric" placeholder="O escribe el código">
+  <button id="ok">Ver</button>
+</div>
+<div id="resultado">
+  <small id="codigo"></small>
+  <div id="frase" style="font-size:1.4rem;font-weight:bold;margin:8px 0"></div>
+  <div id="pais"></div>
+  <div id="fabricadoEn" style="margin:10px 0;font-size:1.15rem;font-weight:bold"></div>
+  <div id="fabrica" style="margin:10px 0;font-size:1.1rem"></div>
+  <button id="buscaWeb" type="button" style="display:none">🔎 Buscar dónde se fabrica</button>
+  <div id="buscaMsg" style="font-size:.9rem;margin-top:8px"></div>
+  <small id="origen"></small>
+   <div id="gs1Datos" style="margin-top:12px;text-align:left;font-size:.95rem"></div>
+   <div style="margin-top:10px;font-size:.78rem;color:#5a4200">
+     ℹ️ El prefijo GS1 identifica dónde se asignó el número, no necesariamente dónde se fabricó.<br>📍 Los lugares se ubican con datos de © OpenStreetMap.
+   </div>
+</div>
+
+<h2>🕘 Historial</h2>
+<div id="hist"></div>
+<button id="borrar">Borrar historial</button>
+
+<div style="text-align:center; margin: 30px auto 10px; padding: 16px;">
+  <p style="color:#5a4200; font-size:.9rem; margin-bottom:10px;">
+    ☕ Apoya el proyecto — Si LQDD Scanner te resulta útil, considera invitarnos a un café para seguir manteniendo y mejorando la app.
+  </p>
+  <a href="https://www.paypal.me/LLQDD" target="_blank" rel="noopener"
+     style="display:inline-block; background:#AA151B; color:#F1BF00; font-weight:bold;
+     padding:12px 28px; border-radius:10px; text-decoration:none;">
+    💛 Hacer una donación
+  </a>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script>/* LQDD SCANNER: SIN ENLACES EXTERNOS NI NAVEGACION FUERA DE LA APP */</script>
+<script>
+// [desde, hasta, país] — prefijos GS1 de 3 dígitos
+const R = [
+  [1,19,"Estados Unidos"],[30,39,"Estados Unidos"],[60,139,"Estados Unidos"],
+  [300,379,"Francia / Mónaco"],[380,380,"Bulgaria"],[381,381,"Kosovo"],[383,383,"Eslovenia"],
+  [385,385,"Croacia"],[387,387,"Bosnia y Herzegovina"],[389,389,"Montenegro"],
+  [400,440,"Alemania"],[450,459,"Japón"],[460,469,"Rusia"],[470,470,"Kirguistán"],
+  [471,471,"Taiwán"],[474,474,"Estonia"],[475,475,"Letonia"],[476,476,"Azerbaiyán"],
+  [477,477,"Lituania"],[478,478,"Uzbekistán"],[479,479,"Sri Lanka"],[480,480,"Filipinas"],
+  [481,481,"Bielorrusia"],[482,482,"Ucrania"],[483,483,"Turkmenistán"],[484,484,"Moldavia"],
+  [485,485,"Armenia"],[486,486,"Georgia"],[487,487,"Kazajistán"],[488,488,"Tayikistán"],
+  [489,489,"Hong Kong"],[490,499,"Japón"],
+  [500,509,"Reino Unido"],[520,521,"Grecia"],[528,528,"Líbano"],[529,529,"Chipre"],
+  [530,530,"Albania"],[531,531,"Macedonia del Norte"],[535,535,"Malta"],[539,539,"Irlanda"],
+  [540,549,"Bélgica / Luxemburgo"],[560,560,"Portugal"],[569,569,"Islandia"],
+  [570,579,"Dinamarca"],[590,590,"Polonia"],[594,594,"Rumanía"],[599,599,"Hungría"],
+  [600,601,"Sudáfrica"],[603,603,"Ghana"],[604,604,"Senegal"],[605,605,"Uganda"],
+  [606,606,"Angola"],[607,607,"Omán"],[608,608,"Baréin"],[609,609,"Mauricio"],
+  [611,611,"Marruecos"],[613,613,"Argelia"],[615,615,"Nigeria"],[616,616,"Kenia"],
+  [617,617,"Camerún"],[618,618,"Costa de Marfil"],[619,619,"Túnez"],[620,620,"Tanzania"],
+  [621,621,"Siria"],[622,622,"Egipto"],[624,624,"Libia"],[625,625,"Jordania"],
+  [626,626,"Irán"],[627,627,"Kuwait"],[628,628,"Arabia Saudí"],[629,629,"Emiratos Árabes Unidos"],
+  [630,630,"Catar"],[631,631,"Namibia"],[632,632,"Ruanda"],[640,649,"Finlandia"],
+  [680,681,"China"],[690,699,"China"],[700,709,"Noruega"],[729,729,"Israel"],
+  [730,739,"Suecia"],[740,740,"Guatemala"],[741,741,"El Salvador"],[742,742,"Honduras"],
+  [743,743,"Nicaragua"],[744,744,"Costa Rica"],[745,745,"Panamá"],[746,746,"República Dominicana"],
+  [750,750,"México"],[754,755,"Canadá"],[759,759,"Venezuela"],[760,769,"Suiza / Liechtenstein"],
+  [770,771,"Colombia"],[773,773,"Uruguay"],[775,775,"Perú"],[777,777,"Bolivia"],
+  [778,779,"Argentina"],[780,780,"Chile"],[784,784,"Paraguay"],[786,786,"Ecuador"],
+  [789,790,"Brasil"],[800,839,"Italia / San Marino / Ciudad del Vaticano"],[840,849,"España"],
+  [850,850,"Cuba"],[858,858,"Eslovaquia"],[859,859,"Chequia"],[860,860,"Serbia"],
+  [865,865,"Mongolia"],[867,867,"Corea del Norte"],[868,869,"Turquía"],
+  [870,879,"Países Bajos"],[880,881,"Corea del Sur"],[883,883,"Myanmar"],[884,884,"Camboya"],
+  [885,885,"Tailandia"],[888,888,"Singapur"],[890,890,"India"],[893,893,"Vietnam"],
+  [896,896,"Pakistán"],[899,899,"Indonesia"],[900,919,"Austria"],[930,939,"Australia"],
+  [940,949,"Nueva Zelanda"],[955,955,"Malasia"],[958,958,"Macao"]
+];
+
+const ISO = {"EE. UU. / Canadá":"US","EE. UU.":"US","Francia":"FR","Bulgaria":"BG","Eslovenia":"SI","Croacia":"HR","Bosnia y Herzegovina":"BA","Alemania":"DE","Japón":"JP","Rusia":"RU","Kirguistán":"KG","Taiwán":"TW","Estonia":"EE","Letonia":"LV","Azerbaiyán":"AZ","Lituania":"LT","Uzbekistán":"UZ","Sri Lanka":"LK","Filipinas":"PH","Bielorrusia":"BY","Ucrania":"UA","Moldavia":"MD","Armenia":"AM","Georgia":"GE","Kazajistán":"KZ","Hong Kong":"HK","Reino Unido":"GB","Grecia":"GR","Líbano":"LB","Chipre":"CY","Albania":"AL","Macedonia del Norte":"MK","Malta":"MT","Irlanda":"IE","Bélgica / Luxemburgo":"BE","Portugal":"PT","Islandia":"IS","Dinamarca":"DK","Polonia":"PL","Rumanía":"RO","Hungría":"HU","Sudáfrica":"ZA","Ghana":"GH","Baréin":"BH","Mauricio":"MU","Marruecos":"MA","Argelia":"DZ","Kenia":"KE","Costa de Marfil":"CI","Túnez":"TN","Siria":"SY","Egipto":"EG","Libia":"LY","Jordania":"JO","Irán":"IR","Kuwait":"KW","Arabia Saudí":"SA","Emiratos Árabes Unidos":"AE","Finlandia":"FI","China":"CN","Noruega":"NO","Israel":"IL","Suecia":"SE","Guatemala":"GT","El Salvador":"SV","Honduras":"HN","Nicaragua":"NI","Costa Rica":"CR","Panamá":"PA","República Dominicana":"DO","México":"MX","Canadá":"CA","Venezuela":"VE","Suiza":"CH","Colombia":"CO","Uruguay":"UY","Perú":"PE","Bolivia":"BO","Argentina":"AR","Chile":"CL","Paraguay":"PY","Ecuador":"EC","Brasil":"BR","Italia":"IT","España":"ES","Cuba":"CU","Eslovaquia":"SK","Chequia":"CZ","Serbia":"RS","Mongolia":"MN","Corea del Norte":"KP","Turquía":"TR","Países Bajos":"NL","Corea del Sur":"KR","Camboya":"KH","Tailandia":"TH","Singapur":"SG","India":"IN","Vietnam":"VN","Pakistán":"PK","Indonesia":"ID","Austria":"AT","Australia":"AU","Nueva Zelanda":"NZ","Malasia":"MY","Macao":"MO"};
+Object.assign(ISO, {"Bélgica":"BE","Luxemburgo":"LU","Bangladesh":"BD","Myanmar":"MM","Nepal":"NP","Etiopía":"ET","Unión Europea":"EU"});
+function bandera(nombre){
+  const c = ISO[nombre];
+  return c ? String.fromCodePoint(...[...c].map(x => 127397 + x.charCodeAt(0))) : "🌍";
+}
+
+// Historial (se guarda en el propio móvil)
+function cargarHist(){ try{ return JSON.parse(localStorage.getItem("hist")||"[]"); }catch(e){ return []; } }
+function guardar(codigo, pais, fab){
+  const h = cargarHist().filter(x => x.codigo !== codigo);
+  h.unshift({codigo, pais, fab, fecha:new Date().toLocaleString("es-ES")});
+  try{ localStorage.setItem("hist", JSON.stringify(h.slice(0,50))); }catch(e){}
+  pintarHist();
+}
+function pintarHist(){
+  const h = cargarHist();
+  document.getElementById("hist").innerHTML = h.length
+    ? h.map(x => '<div class="item">'+bandera(x.pais)+' <b>'+x.pais+'</b>'+(x.fab?(x.fab.indexOf('según')===0?' · 🏷️ ':' · 🏭 ')+x.fab:'')+'<small>'+x.codigo+' · '+x.fecha+'</small></div>').join("")
+    : '<small>Aún no has escaneado nada.</small>';
+}
+document.getElementById("borrar").onclick = () => { try{ localStorage.removeItem("hist"); }catch(e){} pintarHist(); };
+pintarHist();
+
+function paisDe(codigo){
+  const c = codigo.replace(/\D/g,"");
+  if(c.length < 8) return null;
+  // UPC-A (12 dígitos) equivale a EAN-13 con un 0 delante
+  const ean = c.length === 12 ? "0"+c : c;
+  const p = parseInt(ean.slice(0,3),10);
+  const f = R.find(([a,b]) => p>=a && p<=b);
+  return f ? f[2] : "Desconocido / código especial";
+}
+
+let vozActiva = localStorage.getItem("vozActiva") !== "0";
+
+function actualizarBotonVoz(){
+  const b = document.getElementById("vozBtn");
+  if(!b) return;
+  b.textContent = vozActiva ? "🔊 Voz: ACTIVADA" : "🔇 Voz: DESACTIVADA";
+  b.style.background = vozActiva ? "#6b4e00" : "#555";
+}
+
+function hablar(texto){
+  if(!vozActiva) return;
+  try{
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(texto);
+    u.lang = "es-ES";
+    speechSynthesis.speak(u);
+  }catch(e){}
+}
+function fanfarriaEspana(){
+  try{
+    const C = window.AudioContext || window.webkitAudioContext;
+    if(!C) return;
+    const ctx = new C();
+    const ahora = ctx.currentTime;
+    // Pequeña fanfarria ascendente, generada en el propio navegador.
+    const notas = [
+      [392,0.00,0.18],[523.25,0.18,0.18],[659.25,0.36,0.22],
+      [523.25,0.62,0.16],[659.25,0.78,0.16],[783.99,0.94,0.42]
+    ];
+    notas.forEach(([freq, inicio, dur]) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(freq, ahora + inicio);
+      gain.gain.setValueAtTime(0.0001, ahora + inicio);
+      gain.gain.exponentialRampToValueAtTime(0.16, ahora + inicio + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ahora + inicio + dur);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ahora + inicio);
+      osc.stop(ahora + inicio + dur + 0.02);
+    });
+    setTimeout(() => { try{ctx.close();}catch(e){} }, 1800);
+  }catch(e){}
+}
+
+function pitidoEmergencia(){
+  try{
+    const C = window.AudioContext || window.webkitAudioContext;
+    if(!C) return;
+    const ctx = new C();
+    const ahora = ctx.currentTime;
+    [0, 0.28, 0.56].forEach((d, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "square";
+      osc.frequency.value = i % 2 === 0 ? 880 : 660;
+      gain.gain.setValueAtTime(0.0001, ahora + d);
+      gain.gain.exponentialRampToValueAtTime(0.18, ahora + d + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ahora + d + 0.18);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ahora + d);
+      osc.stop(ahora + d + 0.2);
+    });
+    setTimeout(() => { try{ctx.close();}catch(e){} }, 1200);
+  }catch(e){}
+}
+
+// Chrome solo deja hablar tras un toque del usuario: lo "desbloqueamos" con el primero
+window.addEventListener("pointerdown", () => {
+  try{ const u = new SpeechSynthesisUtterance(""); u.volume = 0; speechSynthesis.speak(u); }catch(e){}
+}, {once:true});
+
+// ---------- Dónde se PRODUJO (no dónde se registró la marca) ----------
+const ALIAS = [
+ ["España",["espana","spain","espagne","spanien"]],
+ ["Francia",["francia","france"]],
+ ["Alemania",["alemania","germany","allemagne","deutschland"]],
+ ["Italia",["italia","italy","italie"]],
+ ["Portugal",["portugal"]],
+ ["Reino Unido",["reino unido","united kingdom","royaume-uni","great britain","inglaterra","england"]],
+ ["Países Bajos",["paises bajos","netherlands","holland","holanda","pays-bas"]],
+ ["Bélgica",["belgica","belgium","belgique"]],
+ ["Polonia",["polonia","poland","pologne"]],
+ ["Marruecos",["marruecos","morocco","maroc"]],
+ ["China",["china","prc","p.r.c"]],
+ ["Turquía",["turquia","turkey","turkiye"]],
+ ["EE. UU.",["estados unidos","united states","usa","ee. uu","ee.uu"]],
+ ["México",["mexico"]],
+ ["Argentina",["argentina"]],
+ ["Brasil",["brasil","brazil"]],
+ ["Chile",["chile"]],
+ ["Colombia",["colombia"]],
+ ["Perú",["peru"]],
+ ["India",["india"]],
+ ["Japón",["japon","japan"]],
+ ["Tailandia",["tailandia","thailand"]],
+ ["Vietnam",["vietnam"]],
+ ["Irlanda",["irlanda","ireland"]],
+ ["Suiza",["suiza","switzerland","suisse"]],
+ ["Austria",["austria"]],
+ ["Dinamarca",["dinamarca","denmark"]],
+ ["Suecia",["suecia","sweden"]],
+ ["Grecia",["grecia","greece"]],
+ ["Rumanía",["rumania","romania"]],
+ ["Hungría",["hungria","hungary"]],
+ ["Egipto",["egipto","egypt"]],
+ ["Indonesia",["indonesia"]],
+ ["Corea del Sur",["corea del sur","south korea"]],
+ ["Corea del Norte",["corea del norte","north korea"]],
+ ["Rusia",["rusia","russia"]],
+ ["Ucrania",["ucrania","ukraine"]],
+ ["Bulgaria",["bulgaria"]],
+ ["Croacia",["croacia","croatia"]],
+ ["Eslovenia",["eslovenia","slovenia"]],
+ ["Eslovaquia",["eslovaquia","slovakia"]],
+ ["Chequia",["chequia","republica checa","czech republic","czechia"]],
+ ["Serbia",["serbia"]],
+ ["Finlandia",["finlandia","finland"]],
+ ["Noruega",["noruega","norway"]],
+ ["Lituania",["lituania","lithuania"]],
+ ["Letonia",["letonia","latvia"]],
+ ["Estonia",["estonia"]],
+ ["Luxemburgo",["luxemburgo","luxembourg"]],
+ ["Islandia",["islandia","iceland"]],
+ ["Malta",["malta"]],
+ ["Chipre",["chipre","cyprus"]],
+ ["Albania",["albania"]],
+ ["Bosnia y Herzegovina",["bosnia"]],
+ ["Macedonia del Norte",["macedonia"]],
+ ["Moldavia",["moldavia","moldova"]],
+ ["Bielorrusia",["bielorrusia","belarus"]],
+ ["Georgia",["georgia"]],
+ ["Armenia",["armenia"]],
+ ["Kazajistán",["kazajistan","kazakhstan"]],
+ ["Canadá",["canada"]],
+ ["Australia",["australia"]],
+ ["Nueva Zelanda",["nueva zelanda","new zealand"]],
+ ["Sudáfrica",["sudafrica","south africa"]],
+ ["Túnez",["tunez","tunisia","tunisie"]],
+ ["Argelia",["argelia","algeria","algerie"]],
+ ["Kenia",["kenia","kenya"]],
+ ["Ghana",["ghana"]],
+ ["Etiopía",["etiopia","ethiopia"]],
+ ["Israel",["israel"]],
+ ["Líbano",["libano","lebanon"]],
+ ["Jordania",["jordania","jordan"]],
+ ["Irán",["iran"]],
+ ["Arabia Saudí",["arabia saudi","arabia saudita","saudi arabia"]],
+ ["Emiratos Árabes Unidos",["emiratos arabes","united arab emirates","uae"]],
+ ["Taiwán",["taiwan"]],
+ ["Hong Kong",["hong kong"]],
+ ["Filipinas",["filipinas","philippines"]],
+ ["Malasia",["malasia","malaysia"]],
+ ["Singapur",["singapur","singapore"]],
+ ["Camboya",["camboya","cambodia"]],
+ ["Myanmar",["myanmar","birmania"]],
+ ["Bangladesh",["bangladesh"]],
+ ["Pakistán",["pakistan"]],
+ ["Sri Lanka",["sri lanka"]],
+ ["Nepal",["nepal"]],
+ ["Uruguay",["uruguay"]],
+ ["Paraguay",["paraguay"]],
+ ["Bolivia",["bolivia"]],
+ ["Ecuador",["ecuador"]],
+ ["Venezuela",["venezuela"]],
+ ["Cuba",["cuba"]],
+ ["República Dominicana",["republica dominicana","dominican republic"]],
+ ["Costa Rica",["costa rica"]],
+ ["Panamá",["panama"]],
+ ["Guatemala",["guatemala"]],
+ ["El Salvador",["el salvador"]],
+ ["Honduras",["honduras"]],
+ ["Nicaragua",["nicaragua"]],
+ ["Unión Europea",["union europea","european union","u.e.","ue","eu"]]
+];
+const EMB = {AT:"Austria",BE:"Bélgica",BG:"Bulgaria",CY:"Chipre",CZ:"Chequia",DE:"Alemania",DK:"Dinamarca",EE:"Estonia",ES:"España",FI:"Finlandia",FR:"Francia",GR:"Grecia",HR:"Croacia",HU:"Hungría",IE:"Irlanda",IT:"Italia",LT:"Lituania",LU:"Bélgica / Luxemburgo",LV:"Letonia",MT:"Malta",NL:"Países Bajos",PL:"Polonia",PT:"Portugal",RO:"Rumanía",SE:"Suecia",SI:"Eslovenia",SK:"Eslovaquia",GB:"Reino Unido",UK:"Reino Unido"};
+const norm = t => String(t||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+// Busca el primer país que aparece nombrado en un texto libre
+function detectar(texto){
+  const t = norm(texto);
+  let mejor = null, pos = 1e9;
+  for(const [pais, alias] of ALIAS){
+    for(const a of alias){
+      const m = new RegExp("(^|[^a-z])"+a.replace(/[.]/g,"\\.")+"([^a-z]|$)").exec(t);
+      if(m && m.index < pos){ pos = m.index; mejor = pais; }
+    }
+  }
+  return mejor;
+}
+// Código de envasador/sanitario de la UE: "ES 10.02547/H CE", "FR 35.123.001 CE", "EMB 35123"
+function deEmb(texto){
+  const t=String(texto||"").toUpperCase();
+  const m=t.match(/(?:^|[^A-Z])([A-Z]{2})\s?\d/);
+  return (m&&EMB[m[1]])||null;
+}
+// Etiquetas tipo "en:made-in-spain"
+function deEtiqueta(tags){
+  for(const t of (tags||[])){
+    const m = String(t).match(/made-in-([a-z-]+)/);
+    if(m){ const p = detectar(m[1].replace(/-/g," ")); if(p) return p; }
+  }
+  return null;
+}
+
+function paisDeTags(tags){
+  if(!Array.isArray(tags)) return null;
+  for(const tag of tags){
+    const raw=String(tag||"").toLowerCase();
+    const limpio=raw.replace(/^([a-z]{2}):/i,"").replace(/^made-in-/,"").replace(/-/g," ");
+    const p=detectar(limpio);
+    if(p && p!=="Unión Europea") return p;
+  }
+  return null;
+}
+
+// ---------- Ubicar un lugar (ciudad, pueblo, provincia) y saber a qué país pertenece ----------
+// Provincia española según las dos primeras cifras del número sanitario (ES 18.xxxxx/GR = Granada)
+const PROV = {"01":"Álava","02":"Albacete","03":"Alicante","04":"Almería","05":"Ávila","06":"Badajoz","07":"Baleares","08":"Barcelona","09":"Burgos","10":"Cáceres","11":"Cádiz","12":"Castellón","13":"Ciudad Real","14":"Córdoba","15":"A Coruña","16":"Cuenca","17":"Girona","18":"Granada","19":"Guadalajara","20":"Gipuzkoa","21":"Huelva","22":"Huesca","23":"Jaén","24":"León","25":"Lleida","26":"La Rioja","27":"Lugo","28":"Madrid","29":"Málaga","30":"Murcia","31":"Navarra","32":"Ourense","33":"Asturias","34":"Palencia","35":"Las Palmas","36":"Pontevedra","37":"Salamanca","38":"Santa Cruz de Tenerife","39":"Cantabria","40":"Segovia","41":"Sevilla","42":"Soria","43":"Tarragona","44":"Teruel","45":"Toledo","46":"Valencia","47":"Valladolid","48":"Bizkaia","49":"Zamora","50":"Zaragoza","51":"Ceuta","52":"Melilla"};
+function codigosPais(nombre){ return String(nombre||"").split(" / ").map(n=>ISO[n.trim()]).filter(Boolean); }
+async function ubicarLugar(texto,paisHint){
+  const q=String(texto||"").split(/[;|\n]/)[0].trim();
+  if(q.length<2) return null;
+  const ac=new AbortController(), t=setTimeout(()=>ac.abort(),8000);
+  try{
+    const r=await fetch("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&addressdetails=1&accept-language=es&q="+encodeURIComponent(q),{signal:ac.signal});
+    if(!r.ok) return null;
+    const arr=await r.json();
+    const cand=(Array.isArray(arr)?arr:[]).filter(x=>x&&x.address&&x.address.country_code).map(x=>({cc:x.address.country_code.toUpperCase(),pais:x.address.country,lugar:x.display_name}));
+    if(!cand.length) return null;
+    const ambiguo=new Set(cand.map(c=>c.cc)).size>1;
+    let e=cand[0], nota="";
+    if(ambiguo){
+      const h=codigosPais(paisHint), c=cand.find(c=>h.includes(c.cc));
+      if(c){ e=c; nota="Hay varios lugares con ese nombre; elegimos el del país del código de barras"; }
+      else nota="Hay varios lugares con ese nombre; puede no ser este";
+    }
+    return {pais:e.pais,lugar:e.lugar,ambiguo,nota};
+  }catch(err){ return null; }
+  finally{ clearTimeout(t); }
+}
+
+async function buscarProducto(codigo){
+  const bases=["openfoodfacts","openbeautyfacts","openproductsfacts"];
+  const campos="product_name,abbreviated_product_name,generic_name,brands,quantity,product_quantity,product_quantity_unit,categories,categories_tags,manufacturing_places,manufacturing_places_tags,cities_tags,origins,origins_tags,origin,labels,labels_tags,emb_codes,emb_codes_tags,emb_codes_orig,packaging_text,customer_service,producer,stores,link,knowledge_panels";
+  const res=await Promise.all(bases.map(async b=>{
+    const ac=new AbortController(), t=setTimeout(()=>ac.abort(),9000);
+    try{
+      const url="https://world."+b+".org/api/v3/product/"+encodeURIComponent(codigo)+"?fields="+encodeURIComponent(campos)+"&knowledge_panels_included=origins,packaging";
+      const r=await fetch(url,{signal:ac.signal});
+      if(!r.ok)return null;
+      const d=await r.json();
+      return d&&d.product?d.product:null;
+    }catch(e){return null;} finally{clearTimeout(t);}
+  }));
+
+  const ps=res.filter(Boolean);
+  const has=v=>v&&((Array.isArray(v)&&v.length)||(!Array.isArray(v)&&String(v).trim()));
+  const score=p=>[
+    "product_name","brands","generic_name","quantity","categories",
+    "manufacturing_places","manufacturing_places_tags","emb_codes",
+    "emb_codes_tags","origins","packaging_text","customer_service"
+  ].reduce((n,k)=>n+(has(p[k])?1:0),0);
+  ps.sort((a,b)=>score(b)-score(a));
+  const campo=k=>ps.map(p=>p[k]).find(has)||"";
+  const nombre=campo("product_name")||campo("abbreviated_product_name");
+  const marca=campo("brands"), denominacion=campo("generic_name");
+  const cantidad=campo("quantity")||([campo("product_quantity"),campo("product_quantity_unit")].filter(Boolean).join(" "));
+  const categoria=campo("categories")||(Array.isArray(campo("categories_tags"))?campo("categories_tags").join(", "):"");
+  const fab=campo("manufacturing_places"), fabTags=campo("manufacturing_places_tags");
+  const ciudades=campo("cities_tags");
+  const ori=campo("origins")||campo("origin"), oriTags=campo("origins_tags");
+  const labels=campo("labels_tags")||campo("labels");
+  const emb=campo("emb_codes"), embTags=campo("emb_codes_tags"), embOrig=campo("emb_codes_orig");
+  const packaging=campo("packaging_text"), customer=campo("customer_service"), producer=campo("producer"), link=campo("link");
+  const panels=campo("knowledge_panels");
+
+  let evidencias=[];
+  let p;
+  const hintPais=paisDe(codigo);
+  // 1) Declaración directa: es la evidencia más fuerte.
+  if((p=detectar(fab))) evidencias.push({pais:p,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:fab});
+  else if((p=paisDeTags(fabTags))) evidencias.push({pais:p,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:Array.isArray(fabTags)?fabTags.join(", "):String(fabTags)});
+  else if(fab && String(fab).trim()){
+    const g=await ubicarLugar(fab,hintPais);
+    if(g) evidencias.push({pais:g.pais,nivel:g.ambiguo?"asociado":"confirmado",fuente:"Lugar de fabricación declarado (ubicado con OpenStreetMap)",detalle:String(fab)+" → "+g.lugar+(g.nota?" · "+g.nota:"")});
+    else evidencias.push({pais:null,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:String(fab)});
+  }
+
+  // 2) Etiquetas made-in: evidencia asociada, no equivalente a una declaración libre.
+  if(!evidencias.length && (p=deEtiqueta(labels))) evidencias.push({pais:p,nivel:"asociado",fuente:"Etiqueta de fabricación/origen del producto",detalle:String(labels)});
+
+  // 3) Código sanitario europeo: sus dos letras identifican el país del establecimiento.
+  const sanitario=String(emb||embOrig||"");
+  const sm=sanitario.match(/(?:^|[^A-Z])([A-Z]{2})\s?\d[\d.]*\s*(?:CE)?/i);
+  if(sm && EMB[sm[1].toUpperCase()]){
+    const ep=EMB[sm[1].toUpperCase()];
+    let det=sanitario;
+    if(sm[1].toUpperCase()==="ES"){ const pm=sanitario.match(/ES\s*(\d{2})[.\s]/i); if(pm && PROV[pm[1]]) det+=" → provincia de "+PROV[pm[1]]+" (según el número de registro)"; }
+    evidencias.push({pais:ep,nivel:"asociado",fuente:"Estampilla sanitaria / código de establecimiento",detalle:det});
+  }
+
+  // 4) EMB francés: es un código geográfico de una empresa de envasado/condicionado.
+  // No lo llamamos automáticamente "fabricación": puede ser fabricante, importador o envasador.
+  const em=String(emb||embOrig||"").match(/(?:^|[^A-Z])EMB\s*([0-9]{5})([A-Z]?)/i);
+  let embInfo=null;
+  if(em){
+    embInfo={pais:"Francia",codigo:"EMB "+em[1]+(em[2]||""),nivel:"asociado",fuente:"Código EMB francés",detalle:"Identifica un establecimiento de acondicionado/envasado en Francia; no demuestra por sí solo que allí se fabricó el producto."};
+    evidencias.push(embInfo);
+  }
+
+  // 5) Ciudad/país explícito en los tags de fabricación.
+  if(!evidencias.length && Array.isArray(fabTags)){
+    const raw=fabTags.map(x=>String(x)).join(" ");
+    if((p=detectar(raw))) evidencias.push({pais:p,nivel:"confirmado",fuente:"Etiquetas del lugar de fabricación",detalle:raw});
+  }
+
+  // 6) Datos de empresa: sirven como pista, pero nunca se presentan como fabricación confirmada.
+  const empresaTexto=[customer,producer].filter(Boolean).join(" | ");
+  const paisEmpresa=detectar(empresaTexto);
+  if(paisEmpresa) evidencias.push({pais:paisEmpresa,nivel:"asociado",fuente:"Dirección/datos de empresa del producto",detalle:empresaTexto});
+
+  // Elegimos la evidencia de mayor calidad. Directa > asociada.
+  const prioridad={confirmado:3,asociado:2};
+  evidencias.sort((a,b)=>(prioridad[b.nivel]||0)-(prioridad[a.nivel]||0));
+  const prod=evidencias.find(x=>x.pais)||null;
+
+  let envasado=null;
+  const ep=String(emb||embOrig||"");
+  if((p=deEmb(ep))) envasado={pais:p,fuente:"Código de establecimiento/envasador",nivel:"asociado",detalle:ep};
+  else if(embInfo) envasado=embInfo;
+  else if((p=deEmb(embTags))) envasado={pais:p,fuente:"Código de establecimiento/envasador",nivel:"asociado",detalle:String(embTags)};
+
+  return {nombre,marca,denominacion,cantidad,categoria,fab,ori,oriTags,emb,embTags,embOrig,packaging,customer,producer,ciudades,panels,prod,envasado,evidencias,fuentes:ps.length};
+}
+
+// País guardado en el móvil para un código (por ejemplo, leído de la etiqueta)
+function cargarFab(c){ try{ return JSON.parse(localStorage.getItem("fab_"+c)||"null"); }catch(e){ return null; } }
+function guardarFab(c,p){ try{ localStorage.setItem("fab_"+c, JSON.stringify(p)); }catch(e){} }
+
+// ---------- Búsqueda automática: otros productos de la misma marca y nombre ----------
+async function pedirJSON(url,ms){
+  const ac=new AbortController(), t=setTimeout(()=>ac.abort(),ms||10000);
+  try{ const r=await fetch(url,{signal:ac.signal}); if(!r.ok) return null; return await r.json(); }
+  catch(e){ return null; }
+  finally{ clearTimeout(t); }
+}
+const espera=ms=>new Promise(r=>setTimeout(r,ms));
+function palabras(t){ return norm(t).split(/[^a-z0-9]+/).filter(w=>w.length>=3); }
+
+async function buscarEnWeb(a){
+  const info=a.info;
+  const marca=String(info.marca||"").split(",")[0].trim();
+  const nombre=String(info.nombre||info.denominacion||"").trim();
+  if(!marca && !nombre) return {error:"sin-datos"};
+  const campos="code,product_name,brands,manufacturing_places,emb_codes,labels_tags";
+  const slug=norm(marca).replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"");
+  const termino=[marca,nombre].filter(Boolean).join(" ");
+  const urls=[];
+  for(const b of ["openfoodfacts","openbeautyfacts","openproductsfacts"]){
+    if(slug) urls.push("https://world."+b+".org/api/v2/search?brands_tags="+encodeURIComponent(slug)+"&fields="+campos+"&page_size=60");
+    urls.push("https://world."+b+".org/cgi/search.pl?action=process&json=1&search_simple=1&page_size=40&fields="+campos+"&search_terms="+encodeURIComponent(termino));
+  }
+  const resp=await Promise.all(urls.map(u=>pedirJSON(u,12000)));
+  const vistos=new Set([String(a.codigo)]), cand=[];
+  const pn=palabras(nombre), mn=norm(marca);
+  for(const d of resp){
+    for(const p of ((d&&d.products)||[])){
+      if(!p||!p.code||vistos.has(String(p.code))) continue;
+      vistos.add(String(p.code));
+      if(mn && !norm(p.brands).includes(mn)) continue;      // misma marca
+      const pw=palabras(p.product_name);
+      const comunes=pn.filter(w=>pw.includes(w)).length;
+      if(!mn && comunes<2) continue;                        // sin marca: exigimos nombre muy parecido
+      cand.push({p,peso:comunes>=2?3:1});                   // los de nombre parecido pesan más
+    }
+  }
+  const votos={}, ejemplos=[], pendientes=[];
+  const sumar=(pais,c,txt)=>{ votos[pais]=(votos[pais]||0)+c.peso; if(ejemplos.length<4) ejemplos.push((c.p.product_name||c.p.code)+" → "+txt); };
+  for(const c of cand){
+    const p=c.p, fab=String(p.manufacturing_places||"").trim();
+    let pais=fab?detectar(fab):null;
+    if(!pais) pais=deEtiqueta(p.labels_tags);
+    if(!pais && p.emb_codes) pais=deEmb(p.emb_codes);
+    if(pais) sumar(pais,c,pais+(fab?" ("+fab+")":""));
+    else if(fab) pendientes.push({c,fab});
+  }
+  // Los lugares que son solo pueblo/ciudad: averiguamos su país (máx. 3 consultas, con pausa)
+  {
+    const vf=new Set(); let n=0;
+    for(const {c,fab} of pendientes){
+      const k=norm(fab); if(vf.has(k)) continue; vf.add(k);
+      if(n>=3) break;
+      if(n>0) await espera(1100);
+      n++;
+      const g=await ubicarLugar(fab,a.prefijo);
+      if(g) sumar(g.pais,c,g.pais+" ("+fab+")");
+    }
+  }
+  const orden=Object.entries(votos).sort((x,y)=>y[1]-x[1]);
+  if(!orden.length) return {error:cand.length?"sin-fabricacion":"sin-parecidos"};
+  const pais=orden[0][0], otros=orden.slice(1).map(x=>x[0]);
+  return {pais,nivel:"asociado",fuente:"Búsqueda en la web: otros productos de la misma marca",
+    detalle:ejemplos.join(" · ")+(otros.length?" · También aparece: "+otros.join(", "):""),
+    voz:"Buscando en la web, otros productos de la misma marca se fabrican en "+pais+". Es una pista, no una confirmación"};
+}
+
+let actual = null; // {codigo, prefijo, info}
+const $ = id => document.getElementById(id);
+
+async function mostrar(codigo){
+  const gs1Raw=String(codigo||"");
+  const gs1=extraerGS1(gs1Raw);
+  const codigoProducto=gs1.gtin || String(codigo||"").replace(/\D/g,"");
+  const prefijo = paisDe(codigoProducto);
+  const cuadro = $("resultado"); cuadro.style.display="block"; cuadro.className=""; actual=null;
+  $("codigo").textContent="Código: "+codigo;
+  $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("gs1Datos").innerHTML=""; $("buscaMsg").textContent=""; $("buscaWeb").style.display="none";
+  if(!prefijo){ $("pais").textContent="Código no válido"; hablar("Código no válido"); return; }
+  $("pais").textContent="🔎 Consultando información del producto...";
+  const info=await buscarProducto(codigoProducto); actual={codigo:codigoProducto,prefijo,info,gs1Raw}; pintar();
+}
+
+
+// ---------- Datos GS1 2D: origen, procesamiento y localización ----------
+const ISO_NUM = {
+  "008":"Bahrein","032":"Argentina","036":"Australia","040":"Austria","056":"Bélgica",
+  "076":"Brasil","100":"Bulgaria","124":"Canadá","152":"Chile","156":"China","170":"Colombia",
+  "191":"Croacia","196":"Chipre","203":"Chequia","208":"Dinamarca","214":"República Dominicana",
+  "218":"Ecuador","222":"El Salvador","233":"Estonia","246":"Finlandia","250":"Francia",
+  "276":"Alemania","300":"Grecia","320":"Guatemala","328":"Guyana","348":"Hungría",
+  "356":"India","360":"Indonesia","372":"Irlanda","376":"Israel","380":"Italia","392":"Japón",
+  "398":"Kazajistán","400":"Jordania","404":"Kenia","410":"Corea del Sur","414":"Kuwait",
+  "422":"Líbano","428":"Letonia","440":"Lituania","442":"Luxemburgo","458":"Malasia",
+  "462":"Irán","470":"Malta","484":"México","496":"Mongolia","498":"Moldavia","504":"Marruecos",
+  "528":"Países Bajos","554":"Nueva Zelanda","566":"Nigeria","578":"Noruega","586":"Pakistán",
+  "591":"Panamá","604":"Perú","620":"Portugal","642":"Rumanía","643":"Rusia","682":"Arabia Saudí",
+  "688":"Serbia","702":"Singapur","704":"Vietnam","710":"Sudáfrica","724":"España",
+  "752":"Suecia","756":"Suiza","760":"Siria","764":"Tailandia","780":"Emiratos Árabes Unidos",
+  "788":"Túnez","792":"Turquía","800":"Uganda","807":"Macedonia del Norte","818":"Egipto",
+  "826":"Reino Unido","834":"Tanzania","840":"Estados Unidos","858":"Eslovaquia","860":"Serbia",
+  "862":"Venezuela","882":"Samoa","887":"Yemen","894":"Zambia"
+};
+function paisISO3(n){
+  const k=String(n||"").padStart(3,"0");
+  return ISO_NUM[k] || null;
+}
+function limpiarGS1(txt){ return String(txt||"").replace(/\u001d/g,"|").replace(/[\u001c\u001e]/g,"|").trim(); }
+function extraerGS1(raw){
+  const t=limpiarGS1(raw);
+  const out={raw:t, gtin:null, origen:null, inicial:null, es2D:false};
+  // GS1 Digital Link: https://dominio/.../01/GTIN...?422=724&424=156 etc.
+  const mG=t.match(/(?:[?&]|\/)01[=\/]?(\d{14})(?:[&/]|$)/); if(mG) out.gtin=mG[1].replace(/^0+/,'')||mG[1];
+  const pairs=[["422","origen"],["423","inicial"]];
+  for(const [ai,key] of pairs){
+    const re=new RegExp("(?:[?&]|\\\\|\\(|^)"+ai+"[=]?(\\d{3})");
+    const m=t.match(re); if(m) out[key]=paisISO3(m[1]) || "Código ISO "+m[1];
+  }
+  const m416=t.match(/(?:[?&]|\||\()416[=]?(\d{13})/); if(m416) out.glnProduccion=m416[1];
+  // GS1 element string: (422)724, (423)724..., (424)156, (426)724, o sin paréntesis con GS.
+  for(const [ai,key] of pairs){
+    if(out[key]) continue;
+    const re=new RegExp("(?:\\("+ai+"\\)|(?:^|[|])"+ai+")(\\d{3})");
+    const m=t.match(re); if(m) out[key]=paisISO3(m[1]) || "Código ISO "+m[1];
+  }
+  out.es2D=!!(out.origen||out.inicial||/^(https?:\/\/)/i.test(t));
+  return out;
+}
+function pintarGS1(raw){
+  const box=$("gs1Datos"); if(!box) return null;
+  const d=extraerGS1(raw); let h="";
+  if(d.gtin) h+="🔢 <b>GTIN:</b> "+esc(d.gtin)+"<br>";
+  if(d.origen) h+="🌍 <b>País de origen:</b> "+esc(d.origen)+"<br>";
+  if(d.inicial) h+="🧪 <b>País de procesamiento inicial:</b> "+esc(d.inicial)+"<br>";
+  if(!h && d.es2D) h="📦 <b>QR/DataMatrix GS1 detectado</b><br><small>Este código no contiene datos de país que podamos mostrar directamente.</small>";
+  box.innerHTML=h ? '<div style="padding:10px;background:#fff7d6;border-radius:10px;border:1px solid #e0c45c">'+h+'</div>' : '';
+  return d;
+}
+function pintar(silencio){
+  const {codigo,prefijo,info}=actual, cuadro=$("resultado");
+  const gs1=pintarGS1(actual.gs1Raw||"");
+  const paisPrefijo=prefijo==="España / Andorra"?"España":prefijo;
+  const paisFab=info.prod?(info.prod.pais==="España / Andorra"?"España":info.prod.pais):null;
+  const tieneFabricacion=!!paisFab, desconocido=!paisPrefijo||paisPrefijo.startsWith("Desconocido");
+  $("pais").textContent=desconocido?"🌍 País GS1 desconocido":bandera(paisPrefijo)+" "+paisPrefijo;
+  let frase=""; cuadro.className="";
+  if(!desconocido){ frase=paisPrefijo==="España"?"¡Viva España!":(paisPrefijo==="Marruecos"?"¡No, no, no, Marruecos no!":""); cuadro.className=paisPrefijo==="Marruecos"?"mal":"ok"; }
+  $("frase").textContent=frase;
+  let html="";
+  if(info.nombre) html+="📦 <b>Producto:</b> "+esc(info.nombre)+"<br>";
+  if(info.marca) html+="🏷️ <b>Marca:</b> "+esc(info.marca)+"<br>";
+  if(info.denominacion) html+="📄 <b>Denominación:</b> "+esc(info.denominacion)+"<br>";
+  if(info.cantidad) html+="⚖️ <b>Cantidad:</b> "+esc(info.cantidad)+"<br>";
+  if(info.categoria) html+="🗂️ <b>Categoría:</b> "+esc(info.categoria)+"<br>";
+  if(info.ori) html+="🌍 <b>Origen declarado:</b> "+esc(info.ori)+"<br>";
+  if(tieneFabricacion){
+    const mismo=norm(paisPrefijo)===norm(paisFab);
+    const nivel=info.prod.nivel==="confirmado"?"🟢 CONFIRMADO":"🟡 ASOCIADO";
+    html+=nivel+" · 🏭 <b>Fabricado en: "+esc(paisFab)+"</b> <small>("+esc(info.prod.fuente)+")</small>";
+    if(info.prod.detalle) html+="<br><small>📌 Evidencia: "+esc(info.prod.detalle)+"</small>";
+    $("fabricadoEn").textContent=(info.prod.nivel==="confirmado"?"🟢 ":"🟡 ")+"Fabricado en "+paisFab;
+    if(!mismo) html+="<br>⚠️ El prefijo GS1 es "+esc(paisPrefijo)+", pero la evidencia de fabricación/establecimiento apunta a "+esc(paisFab)+".";
+  }else{
+    html+="⚪ <b>Fabricación: no disponible</b><br><small>No encontramos una evidencia pública suficiente para afirmar el país de fabricación. Sí mostramos abajo las pistas de establecimiento/envasador cuando existen.</small>";
+    $("fabricadoEn").textContent="⚪ Fabricación: no disponible";
+  }
+  if(info.fab) html+="<br>📍 <b>Lugar registrado:</b> "+esc(info.fab);
+  if(info.envasado) html+="<br>📦 <b>País asociado al envasador:</b> "+esc(info.envasado.pais)+" <small>(dato asociado; no demuestra por sí solo la fabricación)</small>";
+  if(info.packaging) html+="<br>📦 <b>Envase:</b> "+esc(info.packaging);
+  if(info.emb) html+="<br>🔎 <b>Código de trazabilidad:</b> "+esc(info.emb);
+  if(info.customer) html+="<br>🏢 <b>Datos de empresa:</b> "+esc(info.customer);
+  if(info.evidencias && info.evidencias.length>1){
+    html+="<br><br><b>🔍 Evidencias encontradas</b>";
+    info.evidencias.slice(0,4).forEach(e=>{
+      html+="<br>· "+(e.nivel==="confirmado"?"🟢":"🟡")+" "+esc(e.fuente)+(e.pais?": "+esc(e.pais):"");
+    });
+  }
+  $("fabrica").innerHTML=html;
+  $("buscaWeb").style.display=tieneFabricacion?"none":"block";
+  if(!silencio){ if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia(); }
+  const detalle=tieneFabricacion?(info.prod.nivel==="confirmado"?"El producto tiene un dato de fabricación declarado en "+paisFab:(info.prod.voz||"Hay una evidencia asociada a un establecimiento en "+paisFab+", pero no demuestra por sí sola la fabricación")):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no hay una evidencia pública suficiente para confirmar dónde se fabricó.";
+  hablar((frase?frase+" ":"")+detalle);
+  guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1");
+}
+
+if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
+const btn = document.getElementById("btn");
+const estadoEscaneo = document.getElementById("estadoEscaneo");
+let scanner, activo=false, ultimo="";
+
+async function parar(){
+  if(!activo)return; activo=false;
+  try{await scanner.stop();scanner.clear();}catch(e){}
+  btn.textContent="📷 Escanear otro";
+  if(estadoEscaneo)estadoEscaneo.textContent="📷 Escanea el código para identificarlo";
+}
+
+async function iniciar(){
+  if(activo)return; activo=true;
+  btn.textContent="Parar cámara";
+  if(estadoEscaneo)estadoEscaneo.textContent="📷 Buscando código...";
+  scanner=new Html5Qrcode("lector",{formatsToSupport:[
+    Html5QrcodeSupportedFormats.EAN_13,
+    Html5QrcodeSupportedFormats.EAN_8,
+    Html5QrcodeSupportedFormats.UPC_A,
+    Html5QrcodeSupportedFormats.UPC_E,
+    ...(Html5QrcodeSupportedFormats.QR_CODE!==undefined?[Html5QrcodeSupportedFormats.QR_CODE]:[]),
+    ...(Html5QrcodeSupportedFormats.DATA_MATRIX!==undefined?[Html5QrcodeSupportedFormats.DATA_MATRIX]:[])
+  ],experimentalFeatures:{useBarCodeDetectorIfSupported:true},verbose:false});
+  try{
+    await scanner.start({facingMode:"environment"},{fps:10,qrbox:{width:260,height:140}},async txt=>{
+      if(!activo)return;
+      await parar();
+      if(navigator.vibrate)navigator.vibrate(150);
+      mostrar(txt);
+    });
+  }catch(e){
+    activo=false; btn.textContent="Activar cámara";
+    if(estadoEscaneo)estadoEscaneo.textContent="📷 Escanea el código para identificarlo";
+    alert("No se pudo abrir la cámara. Revisa los permisos (hace falta https).");
+  }
+}
+
+const vozBtn = document.getElementById("vozBtn");
+if(vozBtn){
+  actualizarBotonVoz();
+  vozBtn.onclick = () => {
+    vozActiva = !vozActiva;
+    localStorage.setItem("vozActiva", vozActiva ? "1" : "0");
+    if(!vozActiva){
+      try{ speechSynthesis.cancel(); }catch(e){}
+    }
+    actualizarBotonVoz();
+  };
+}
+
+btn.onclick = () => activo ? parar() : iniciar();
+window.addEventListener("load", iniciar);
+document.getElementById("ok").onclick = () => mostrar(document.getElementById("manual").value);
+document.getElementById("buscaWeb").onclick = async () => {
+  if(!actual) return;
+  const b=$("buscaWeb"), msg=$("buscaMsg");
+  b.disabled=true; b.textContent="🔎 Buscando en la web..."; msg.textContent="";
+  let r=null;
+  try{ r=await buscarEnWeb(actual); }catch(e){ r={error:"fallo"}; }
+  b.disabled=false; b.textContent="🔎 Buscar dónde se fabrica";
+  if(r && r.pais){
+    actual.info.evidencias=(actual.info.evidencias||[]).concat([r]);
+    actual.info.prod=r;
+    pintar(true);
+  }else{
+    const m={"sin-datos":"Este código no está en las bases de datos y no tengo ni marca ni nombre para buscarlo.",
+             "sin-parecidos":"No encontré otros productos de esa marca en las bases abiertas.",
+             "sin-fabricacion":"Encontré productos de esa marca, pero ninguno dice dónde se fabrica."};
+    msg.textContent="😕 "+(m[r&&r.error]||"No pude completar la búsqueda. Comprueba tu conexión.")+"";
+  }
+};
+</script>
+</body>
+</html>
