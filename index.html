@@ -73,11 +73,8 @@
   <div id="pais"></div>
   <div id="fabricadoEn" style="margin:10px 0;font-size:1.15rem;font-weight:bold"></div>
   <div id="fabrica" style="margin:10px 0;font-size:1.1rem"></div>
-  <button id="buscaWeb" type="button" style="display:none">🔎 Buscar dónde se fabrica</button>
-  <div id="buscaMsg" style="font-size:.9rem;margin-top:8px"></div>
   <button id="verIngredientes" type="button" style="display:none">🧪 ¿Quieres saber los ingredientes?</button>
   <div id="ingredientesBox" style="margin-top:10px;text-align:left;font-size:.95rem;display:none;background:#fff7d6;border:1px solid #e0c45c;border-radius:10px;padding:10px"></div>
-  <div id="webResultados" style="margin-top:12px;text-align:left"></div>
   <small id="origen"></small>
    <div id="gs1Datos" style="margin-top:12px;text-align:left;font-size:.95rem"></div>
    <div style="margin-top:10px;font-size:.78rem;color:#5a4200">
@@ -153,8 +150,7 @@ function cargarHist(){ try{ return JSON.parse(localStorage.getItem("hist")||"[]"
 function guardar(codigo, pais, fab, extra){
   const h = cargarHist().filter(x => x.codigo !== codigo);
   h.unshift({codigo, pais, fab, fecha:new Date().toLocaleString("es-ES"),
-    nombre:(extra&&extra.nombre)||"", frase:(extra&&extra.frase)||"", snapshot:(extra&&extra.snapshot)||null,
-    fabricacion:(extra&&extra.fabricacion)||null, etiqueta:(extra&&extra.etiqueta)||null});
+    nombre:(extra&&extra.nombre)||"", frase:(extra&&extra.frase)||"", snapshot:(extra&&extra.snapshot)||null});
   try{ localStorage.setItem("hist", JSON.stringify(h.slice(0,50))); }catch(e){}
   pintarHist();
 }
@@ -172,8 +168,6 @@ function pintarHist(){
     ? h.map((x,i) => '<div class="item" data-idx="'+i+'" style="cursor:pointer">'+bandera(x.pais)+' <b>'+escHist(x.nombre||x.pais)+'</b>'
         +(x.frase?' · <span style="color:#1e8e3e;font-weight:bold">'+escHist(x.frase)+'</span>':'')
         +(x.fab?(x.fab.indexOf('según')===0?' · 🏷️ ':' · 🏭 ')+escHist(x.fab):'')
-        +(x.fabricacion&&x.fabricacion.length?'<div style="margin-top:6px;font-size:.86rem">🏭 <b>Fabricación:</b> '+escHist(x.fabricacion.map(f=>f.ciudad?f.ciudad+', '+f.pais:(f.pais||'')).filter(Boolean).join(' · '))+'</div>':'')
-        +(x.etiqueta&&x.etiqueta.fabricadoEn?'<div style="margin-top:4px;font-size:.84rem">🏷️ <b>Etiqueta:</b> '+escHist(x.etiqueta.fabricadoEn)+'</div>':'')
         +'<small>'+escHist(x.codigo)+' · '+escHist(x.fecha)+'</small></div>').join("")
     : '<small>Aún no has escaneado nada.</small>';
   document.querySelectorAll("#hist .item").forEach(el=>{
@@ -550,400 +544,6 @@ async function buscarProducto(codigo){
 // País guardado en el móvil para un código (por ejemplo, leído de la etiqueta)
 function cargarFab(c){ try{ return JSON.parse(localStorage.getItem("fab_"+c)||"null"); }catch(e){ return null; } }
 function guardarFab(c,p){ try{ localStorage.setItem("fab_"+c, JSON.stringify(p)); }catch(e){} }
-
-// ---------- Memoria LQDD de fabricación ----------
-// Se deja vacía hasta conectar Supabase. Mientras tanto, la aplicación guarda
-// los resultados en la ficha local del producto. Cuando pongamos las credenciales
-// públicas de Supabase, la misma función pasará a compartirlos entre usuarios.
-const LQDD_SUPABASE_URL = "";
-const LQDD_SUPABASE_KEY = "";
-
-function normalizarFabricacionLQDD(x){
-  return {
-    pais:String(x.pais||"").trim(),
-    provincia:String(x.provincia||"").trim(),
-    ciudad:String(x.ciudad||"").trim(),
-    direccion:String(x.direccion||"").trim(),
-    fabricante:String(x.fabricante||"").trim(),
-    estado:String(x.estado||"asociado").trim(),
-    evidencia:String(x.evidencia||"").trim(),
-    fuente:String(x.fuente||"").trim(),
-    confirmaciones:Number(x.confirmaciones||1)||1
-  };
-}
-
-async function consultarMemoriaFabricacion(codigo){
-  if(!LQDD_SUPABASE_URL || !LQDD_SUPABASE_KEY) return [];
-  try{
-    const u=LQDD_SUPABASE_URL.replace(/\/$/,"")+"/rest/v1/fabricacion?codigo_barras=eq."+encodeURIComponent(String(codigo).replace(/\D/g,""))+"&select=*";
-    const r=await fetch(u,{headers:{apikey:LQDD_SUPABASE_KEY,Authorization:"Bearer "+LQDD_SUPABASE_KEY}});
-    if(!r.ok) return [];
-    const arr=await r.json();
-    return Array.isArray(arr)?arr.map(normalizarFabricacionLQDD):[];
-  }catch(e){ return []; }
-}
-
-async function guardarEnMemoriaFabricacion(codigo, datos){
-  if(!LQDD_SUPABASE_URL || !LQDD_SUPABASE_KEY) return false;
-  try{
-    const d=normalizarFabricacionLQDD(datos);
-    const body={codigo_barras:String(codigo).replace(/\D/g,""),producto:String((actual&&actual.info&&actual.info.nombre)||""),marca:String((actual&&actual.info&&actual.info.marca)||""),fabricante:d.fabricante,pais:d.pais,provincia:d.provincia,ciudad:d.ciudad,direccion:d.direccion,tipo_evidencia:d.evidencia,estado:d.estado,fuente:d.fuente,confirmaciones:d.confirmaciones};
-    const u=LQDD_SUPABASE_URL.replace(/\/$/,"")+"/rest/v1/fabricacion";
-    const r=await fetch(u,{method:"POST",headers:{apikey:LQDD_SUPABASE_KEY,Authorization:"Bearer "+LQDD_SUPABASE_KEY,"Content-Type":"application/json",Prefer:"resolution=merge-duplicates"},body:JSON.stringify(body)});
-    return r.ok;
-  }catch(e){ return false; }
-}
-
-function obtenerFabricacionFicha(codigo){
-  try{
-    const h=cargarHist(), e=h.find(x=>String(x.codigo)===String(codigo));
-    return Array.isArray(e&&e.fabricacion)?e.fabricacion:[];
-  }catch(e){return [];}
-}
-
-function actualizarFichaFabricacion(codigo, lugares){
-  try{
-    const h=cargarHist(), i=h.findIndex(x=>String(x.codigo)===String(codigo));
-    if(i<0) return;
-    const actuales=Array.isArray(h[i].fabricacion)?h[i].fabricacion:[];
-    const todos=[...actuales,...lugares.map(normalizarFabricacionLQDD)];
-    const mapa=new Map();
-    todos.forEach(x=>{
-      const k=[norm(x.pais),norm(x.provincia),norm(x.ciudad),norm(x.fabricante)].join("|");
-      if(!mapa.has(k)) mapa.set(k,x);
-      else mapa.get(k).confirmaciones=Math.max(Number(mapa.get(k).confirmaciones||1),Number(x.confirmaciones||1));
-    });
-    h[i].fabricacion=[...mapa.values()];
-    if(lugares[0]&&lugares[0].pais) h[i].fab="fabricado en "+lugares[0].pais+(lugares[0].ciudad?" · "+lugares[0].ciudad:"");
-    localStorage.setItem("hist",JSON.stringify(h.slice(0,50)));
-    pintarHist();
-  }catch(e){}
-}
-
-function actualizarEtiquetaEnFicha(codigo,r){
-  try{
-    const h=cargarHist(), i=h.findIndex(x=>String(x.codigo)===String(codigo));
-    if(i<0) return;
-    h[i].etiqueta={fabricadoEn:r.fabricadoEn||"",fabricante:r.fabricante||"",envasadoEn:r.envasadoEn||"",envasadoPor:r.envasadoPor||"",origen:r.origen||"",direccion:r.direccion||"",ciudad:r.ciudad||"",provincia:r.provincia||"",pais:r.pais||"",raw:r.raw||""};
-    if(r.fabricadoEn||r.fabricante||r.ciudad||r.pais){
-      const pais=r.fabricadoEn||r.pais||"";
-      if(pais){
-        const lugar=normalizarFabricacionLQDD({pais,provincia:r.provincia,ciudad:r.ciudad,direccion:r.direccion,fabricante:r.fabricante,estado:r.fabricadoEn?"confirmado":"asociado",evidencia:r.fabricadoEn?"Etiqueta: Fabricado en":"Etiqueta OCR",fuente:"Lectura de etiqueta LQDD",confirmaciones:1});
-        actualizarFichaFabricacion(codigo,[lugar]);
-      }
-    }
-    localStorage.setItem("hist",JSON.stringify(h.slice(0,50)));
-    pintarHist();
-  }catch(e){}
-}
-window.lqddGuardarEtiquetaHistorial=actualizarEtiquetaEnFicha;
-
-// ---------- Búsqueda REAL del producto concreto ----------
-async function buscarFabricacionRealLQDD(){
-  if(!actual) return;
-  const b=$("buscaWeb"), msg=$("buscaMsg"), box=$("webResultados");
-  b.disabled=true; b.textContent="🔎 Buscando fabricación real..."; msg.textContent=""; box.style.display="block";
-  try{
-    const codigo=String(actual.codigo||"").replace(/\D/g,"");
-    // 1) Memoria colectiva de LQDD (cuando Supabase esté conectado).
-    let lugares=await consultarMemoriaFabricacion(codigo);
-    let origen="memoria LQDD";
-
-    // 2) Si no hay memoria, consulta EXACTAMENTE este código en las bases públicas.
-    if(!lugares.length){
-      const info=await buscarProducto(codigo);
-      const evid=Array.isArray(info.evidencias)?info.evidencias:[];
-      lugares=evid.filter(e=>e&&e.pais).map(e=>normalizarFabricacionLQDD({
-        pais:e.pais, fabricante:info.producer||"", estado:e.nivel||"asociado", evidencia:e.detalle||e.fuente||"", fuente:e.fuente||"Open Products Facts", confirmaciones:1
-      }));
-      origen="búsqueda exacta por código de barras";
-      // Si hay un lugar declarado, lo guardamos localmente y, cuando haya Supabase,
-      // también en la memoria colectiva.
-      if(lugares.length){
-        actualizarFichaFabricacion(codigo,lugares);
-        await Promise.all(lugares.map(x=>guardarEnMemoriaFabricacion(codigo,x)));
-      }
-      actual.info=info;
-    }
-
-    // Quitar duplicados antes de mostrar.
-    const mapa=new Map();
-    lugares.forEach(x=>{const k=[norm(x.pais),norm(x.provincia),norm(x.ciudad),norm(x.fabricante)].join("|");if(!mapa.has(k))mapa.set(k,x);});
-    lugares=[...mapa.values()];
-
-    if(lugares.length){
-      box.innerHTML=`<div style="background:#fff7d6;border:1px solid #e0c45c;border-radius:10px;padding:10px"><b>🏭 Fabricación encontrada para ESTE producto</b><div style="font-size:.8rem;color:#5a4200;margin:4px 0 8px">Código: ${esc(codigo)}</div>${lugares.map(x=>`<div style="background:#fff;border-radius:8px;padding:9px;margin-top:7px;border:1px solid #ddd">${x.estado==="confirmado"?"🟢 Confirmado":"🟡 Asociado"}<br>📍 <b>${esc((x.ciudad?x.ciudad+", ":"")+(x.provincia?x.provincia+", ":"")+x.pais)}</b>${x.fabricante?"<br>🏢 "+esc(x.fabricante):""}${x.evidencia?"<br>🏷️ "+esc(x.evidencia):""}</div>`).join("")}<small style="display:block;margin-top:8px">Fuente: ${esc(origen)}. Si no hay evidencia suficiente, se indica como asociado.</small></div>`;
-      msg.textContent="✅ Resultado guardado en la ficha de este producto.";
-      b.textContent="🙈 Ocultar resultado";
-      hablar("He encontrado información de fabricación para este producto y la he guardado en su ficha.");
-    }else{
-      box.innerHTML='<div style="background:#fff7d6;border:1px solid #e0c45c;border-radius:10px;padding:10px"><b>🔎 Búsqueda exacta sin resultado confirmado</b><br><small>No he encontrado una evidencia suficiente para afirmar dónde se fabrica este código de barras. No voy a sustituirlo por productos parecidos.</small></div>';
-      msg.textContent="⚠️ No encontrado con evidencia suficiente.";
-      b.textContent="🔎 Buscar dónde se fabrica";
-      hablar("No he encontrado una evidencia suficiente de fabricación para este producto.");
-    }
-  }catch(e){
-    box.innerHTML='<div style="background:#ffd3d3;border:1px solid #d32f2f;border-radius:10px;padding:10px">❌ No se pudo completar la búsqueda exacta. Comprueba la conexión.</div>';
-    msg.textContent="❌ Error de búsqueda";
-    b.textContent="🔎 Buscar dónde se fabrica";
-  }finally{ b.disabled=false; }
-}
-
-let actual = null; // {codigo, prefijo, info}
-window.actual = actual;
-let etiquetaPendienteL = null;
-
-function integrarEtiquetaEnResultadoL(r){
-  if(!r) return;
-  const box=$("fabrica");
-  if(!box) return;
-
-  // La etiqueta pasa a formar parte de la ficha principal, justo debajo
-  // de la información del producto, y no queda únicamente en el visor OCR.
-  let h='<div id="lqddEtiquetaFicha" style="margin-top:12px;padding:10px;background:#eef9ff;border:1px solid #4d9dcc;border-radius:10px">';
-  h+='<b>🏷️ Información leída de la etiqueta</b>';
-  const add=(label,val,icon)=>{if(val) h+='<div style="margin:5px 0">'+icon+' <b>'+label+':</b> '+escL(val)+'</div>';};
-  add("Fabricado en",r.fabricadoEn,"🏭");
-  add("Fabricante",r.fabricante,"🏢");
-  add("Envasado en",r.envasadoEn,"📦");
-  add("Envasado por",r.envasadoPor,"📦");
-  add("Importado por",r.importadoPor,"🚚");
-  add("Procesado",r.procesado,"⚙️");
-  add("Distribuido por",r.distribuidoPor,"🚛");
-  add("Etiquetado por",r.etiquetadoPor,"🏷️");
-  add("Acondicionado por",r.acondicionadoPor,"🔧");
-  add("Origen declarado",r.origen,"🌍");
-  add("Dirección",r.direccion,"📍");
-  add("Ciudad",r.ciudad,"🏙️");
-  add("Provincia",r.provincia,"🗺️");
-  add("País detectado",r.pais,"🌐");
-  h+='</div>';
-
-  const old=document.getElementById("lqddEtiquetaFicha");
-  if(old) old.remove();
-  box.insertAdjacentHTML("beforeend",h);
-
-  // Si la etiqueta declara fabricación, actualizamos también el indicador
-  // principal de "Fabricado en".
-  if(r.fabricadoEn){
-    $("fabricadoEn").textContent="🟢 Fabricado en "+r.fabricadoEn+" (según etiqueta)";
-  }
-}
-
-const $ = id => document.getElementById(id);
-
-async function mostrar(codigo){
-  const gs1Raw=String(codigo||"");
-  const gs1=extraerGS1(gs1Raw);
-  const codigoProducto=gs1.gtin || String(codigo||"").replace(/\D/g,"");
-  const prefijo = paisDe(codigoProducto);
-  const cuadro = $("resultado"); cuadro.style.display="block"; cuadro.className=""; actual=null;
-  $("codigo").textContent="Código: "+codigo;
-  $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("gs1Datos").innerHTML=""; $("buscaMsg").textContent=""; $("webResultados").innerHTML=""; $("webResultados").style.display=""; $("buscaWeb").style.display="none"; $("buscaWeb").textContent="🔎 Buscar dónde se fabrica";
-  if(!prefijo){ $("pais").textContent="Código no válido"; hablar("Código no válido"); return; }
-  $("pais").textContent="🔎 Consultando información del producto...";
-  const info=await buscarProducto(codigoProducto); actual={codigo:codigoProducto,prefijo,info,gs1Raw}; window.actual=actual; pintar();
-  if(etiquetaPendienteL){
-    integrarEtiquetaEnResultadoL(etiquetaPendienteL);
-    actualizarEtiquetaEnFicha(codigoProducto,etiquetaPendienteL);
-    etiquetaPendienteL=null;
-  }
-}
-
-
-// ---------- Datos GS1 2D: origen, procesamiento y localización ----------
-const ISO_NUM = {
-  "008":"Bahrein","032":"Argentina","036":"Australia","040":"Austria","056":"Bélgica",
-  "076":"Brasil","100":"Bulgaria","124":"Canadá","152":"Chile","156":"China","170":"Colombia",
-  "191":"Croacia","196":"Chipre","203":"Chequia","208":"Dinamarca","214":"República Dominicana",
-  "218":"Ecuador","222":"El Salvador","233":"Estonia","246":"Finlandia","250":"Francia",
-  "276":"Alemania","300":"Grecia","320":"Guatemala","328":"Guyana","348":"Hungría",
-  "356":"India","360":"Indonesia","372":"Irlanda","376":"Israel","380":"Italia","392":"Japón",
-  "398":"Kazajistán","400":"Jordania","404":"Kenia","410":"Corea del Sur","414":"Kuwait",
-  "422":"Líbano","428":"Letonia","440":"Lituania","442":"Luxemburgo","458":"Malasia",
-  "462":"Irán","470":"Malta","484":"México","496":"Mongolia","498":"Moldavia","504":"Marruecos",
-  "528":"Países Bajos","554":"Nueva Zelanda","566":"Nigeria","578":"Noruega","586":"Pakistán",
-  "591":"Panamá","604":"Perú","620":"Portugal","642":"Rumanía","643":"Rusia","682":"Arabia Saudí",
-  "688":"Serbia","702":"Singapur","704":"Vietnam","710":"Sudáfrica","724":"España",
-  "752":"Suecia","756":"Suiza","760":"Siria","764":"Tailandia","780":"Emiratos Árabes Unidos",
-  "788":"Túnez","792":"Turquía","800":"Uganda","807":"Macedonia del Norte","818":"Egipto",
-  "826":"Reino Unido","834":"Tanzania","840":"Estados Unidos","858":"Eslovaquia","860":"Serbia",
-  "862":"Venezuela","882":"Samoa","887":"Yemen","894":"Zambia"
-};
-function paisISO3(n){
-  const k=String(n||"").padStart(3,"0");
-  return ISO_NUM[k] || null;
-}
-function limpiarGS1(txt){ return String(txt||"").replace(/\u001d/g,"|").replace(/[\u001c\u001e]/g,"|").trim(); }
-function extraerGS1(raw){
-  const t=limpiarGS1(raw);
-  const out={raw:t, gtin:null, origen:null, inicial:null, es2D:false};
-  // GS1 Digital Link: https://dominio/.../01/GTIN...?422=724&424=156 etc.
-  const mG=t.match(/(?:[?&]|\/)01[=\/]?(\d{14})(?:[&/]|$)/); if(mG) out.gtin=mG[1].replace(/^0+/,'')||mG[1];
-  const pairs=[["422","origen"],["423","inicial"]];
-  for(const [ai,key] of pairs){
-    const re=new RegExp("(?:[?&]|\\\\|\\(|^)"+ai+"[=]?(\\d{3})");
-    const m=t.match(re); if(m) out[key]=paisISO3(m[1]) || "Código ISO "+m[1];
-  }
-  const m416=t.match(/(?:[?&]|\||\()416[=]?(\d{13})/); if(m416) out.glnProduccion=m416[1];
-  // GS1 element string: (422)724, (423)724..., (424)156, (426)724, o sin paréntesis con GS.
-  for(const [ai,key] of pairs){
-    if(out[key]) continue;
-    const re=new RegExp("(?:\\("+ai+"\\)|(?:^|[|])"+ai+")(\\d{3})");
-    const m=t.match(re); if(m) out[key]=paisISO3(m[1]) || "Código ISO "+m[1];
-  }
-  out.es2D=!!(out.origen||out.inicial||/^(https?:\/\/)/i.test(t));
-  return out;
-}
-function pintarGS1(raw){
-  const box=$("gs1Datos"); if(!box) return null;
-  const d=extraerGS1(raw); let h="";
-  if(d.gtin) h+="🔢 <b>GTIN:</b> "+esc(d.gtin)+"<br>";
-  if(d.origen) h+="🌍 <b>País de origen:</b> "+esc(d.origen)+"<br>";
-  if(d.inicial) h+="🧪 <b>País de procesamiento inicial:</b> "+esc(d.inicial)+"<br>";
-  if(!h && d.es2D) h="📦 <b>QR/DataMatrix GS1 detectado</b><br><small>Este código no contiene datos de país que podamos mostrar directamente.</small>";
-  box.innerHTML=h ? '<div style="padding:10px;background:#fff7d6;border-radius:10px;border:1px solid #e0c45c">'+h+'</div>' : '';
-  return d;
-}
-function pintar(silencio, sinGuardar){
-  const {codigo,prefijo,info}=actual, cuadro=$("resultado");
-  const gs1=pintarGS1(actual.gs1Raw||"");
-  const paisPrefijo=prefijo==="España / Andorra"?"España":prefijo;
-  const paisFab=info.prod?(info.prod.pais==="España / Andorra"?"España":info.prod.pais):null;
-  const tieneFabricacion=!!paisFab, desconocido=!paisPrefijo||paisPrefijo.startsWith("Desconocido");
-  $("pais").textContent=desconocido?"🌍 País GS1 desconocido":bandera(paisPrefijo)+" "+paisPrefijo;
-  let frase=""; cuadro.className="";
-  if(!desconocido){ frase=paisPrefijo==="España"?"¡Viva España!":(paisPrefijo==="Marruecos"?"¡No, no, no, Marruecos no!":""); cuadro.className=paisPrefijo==="Marruecos"?"mal":"ok"; }
-  $("frase").textContent=frase;
-  let html="";
-  if(info.nombre) html+="📦 <b>Producto:</b> "+esc(info.nombre)+"<br>";
-  if(info.marca) html+="🏷️ <b>Marca:</b> "+esc(info.marca)+"<br>";
-  if(info.denominacion) html+="📄 <b>Denominación:</b> "+esc(info.denominacion)+"<br>";
-  if(info.cantidad) html+="⚖️ <b>Cantidad:</b> "+esc(info.cantidad)+"<br>";
-  if(info.categoria) html+="🗂️ <b>Categoría:</b> "+esc(info.categoria)+"<br>";
-  if(info.ori) html+="🌍 <b>Origen declarado:</b> "+esc(info.ori)+"<br>";
-  if(tieneFabricacion){
-    const mismo=norm(paisPrefijo)===norm(paisFab);
-    const nivel=info.prod.nivel==="confirmado"?"🟢 CONFIRMADO":"🟡 ASOCIADO";
-    html+=nivel+" · 🏭 <b>Fabricado en: "+esc(paisFab)+"</b> <small>("+esc(info.prod.fuente)+")</small>";
-    if(info.prod.detalle) html+="<br><small>📌 Evidencia: "+esc(info.prod.detalle)+"</small>";
-    $("fabricadoEn").textContent=(info.prod.nivel==="confirmado"?"🟢 ":"🟡 ")+"Fabricado en "+paisFab;
-    if(!mismo) html+="<br>⚠️ El prefijo GS1 es "+esc(paisPrefijo)+", pero la evidencia de fabricación/establecimiento apunta a "+esc(paisFab)+".";
-  }else{
-    html+="⚪ <b>Fabricación: no disponible</b><br><small>No encontramos una evidencia pública suficiente para afirmar el país de fabricación. Sí mostramos abajo las pistas de establecimiento/envasador cuando existen.</small>";
-    $("fabricadoEn").textContent="⚪ Fabricación: no disponible";
-  }
-  if(info.fab) html+="<br>📍 <b>Lugar registrado:</b> "+esc(info.fab);
-  if(info.envasado) html+="<br>📦 <b>País asociado al envasador:</b> "+esc(info.envasado.pais)+" <small>(dato asociado; no demuestra por sí solo la fabricación)</small>";
-  if(info.packaging) html+="<br>📦 <b>Envase:</b> "+esc(info.packaging);
-  if(info.emb) html+="<br>🔎 <b>Código de trazabilidad:</b> "+esc(info.emb);
-  if(info.customer) html+="<br>🏢 <b>Datos de empresa:</b> "+esc(info.customer);
-  if(info.evidencias && info.evidencias.length>1){
-    html+="<br><br><b>🔍 Evidencias encontradas</b>";
-    info.evidencias.slice(0,4).forEach(e=>{
-      html+="<br>· "+(e.nivel==="confirmado"?"🟢":"🟡")+" "+esc(e.fuente)+(e.pais?": "+esc(e.pais):"");
-    });
-  }
-  $("fabrica").innerHTML=html;
-  $("buscaWeb").style.display=tieneFabricacion?"none":"block";
-  const btnIng=$("verIngredientes"), boxIng=$("ingredientesBox");
-  if(btnIng){
-    btnIng.style.display=info.ingredients?"block":"none";
-    btnIng.textContent="🧪 ¿Quieres saber los ingredientes?";
-  }
-  if(boxIng){ boxIng.style.display="none"; boxIng.innerHTML=""; }
-  if(!silencio && !sinGuardar){ if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia(); }
-  const detalle=tieneFabricacion?(info.prod.nivel==="confirmado"?"El producto tiene un dato de fabricación declarado en "+paisFab:(info.prod.voz||"Hay una evidencia asociada a un establecimiento en "+paisFab+", pero no demuestra por sí sola la fabricación")):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no hay una evidencia pública suficiente para confirmar dónde se fabricó.";
-  if(!sinGuardar) hablar((frase?frase+" ":"")+detalle);
-  if(!sinGuardar){
-    let snapshot=null;
-    try{ snapshot=JSON.parse(JSON.stringify({prefijo,info,gs1Raw:actual.gs1Raw||""})); }catch(e){}
-    guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1",
-      {nombre:info.nombre||"", frase, snapshot});
-  }
-}
-
-if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
-const btn = document.getElementById("btn");
-const estadoEscaneo = document.getElementById("estadoEscaneo");
-let scanner, activo=false, ultimo="";
-
-async function parar(){
-  if(!activo)return; activo=false;
-  try{await scanner.stop();scanner.clear();}catch(e){}
-  btn.textContent="📷 Escanear otro";
-  if(estadoEscaneo)estadoEscaneo.textContent="📷 Escanea el código para identificarlo";
-}
-
-async function iniciar(){
-  if(activo)return; activo=true;
-  btn.textContent="Parar cámara";
-  if(estadoEscaneo)estadoEscaneo.textContent="📷 Buscando código...";
-  scanner=new Html5Qrcode("lector",{formatsToSupport:[
-    Html5QrcodeSupportedFormats.EAN_13,
-    Html5QrcodeSupportedFormats.EAN_8,
-    Html5QrcodeSupportedFormats.UPC_A,
-    Html5QrcodeSupportedFormats.UPC_E,
-    ...(Html5QrcodeSupportedFormats.QR_CODE!==undefined?[Html5QrcodeSupportedFormats.QR_CODE]:[]),
-    ...(Html5QrcodeSupportedFormats.DATA_MATRIX!==undefined?[Html5QrcodeSupportedFormats.DATA_MATRIX]:[])
-  ],experimentalFeatures:{useBarCodeDetectorIfSupported:true},verbose:false});
-  try{
-    await scanner.start({facingMode:"environment"},{fps:10,qrbox:{width:260,height:140}},async txt=>{
-      if(!activo)return;
-      await parar();
-      if(navigator.vibrate)navigator.vibrate(150);
-      mostrar(txt);
-    });
-  }catch(e){
-    activo=false; btn.textContent="Activar cámara";
-    if(estadoEscaneo)estadoEscaneo.textContent="📷 Escanea el código para identificarlo";
-    alert("No se pudo abrir la cámara. Revisa los permisos (hace falta https).");
-  }
-}
-
-const vozBtn = document.getElementById("vozBtn");
-if(vozBtn){
-  actualizarBotonVoz();
-  vozBtn.onclick = () => {
-    vozActiva = !vozActiva;
-    localStorage.setItem("vozActiva", vozActiva ? "1" : "0");
-    if(!vozActiva){
-      try{ speechSynthesis.cancel(); }catch(e){}
-    }
-    actualizarBotonVoz();
-  };
-}
-
-btn.onclick = () => activo ? parar() : iniciar();
-window.addEventListener("load", iniciar);
-document.getElementById("ok").onclick = () => mostrar(document.getElementById("manual").value);
-const verIngredientesBtn = document.getElementById("verIngredientes");
-if(verIngredientesBtn){
-  verIngredientesBtn.onclick = () => {
-    if(!actual || !actual.info) return;
-    const info = actual.info, box = $("ingredientesBox"), btn = verIngredientesBtn;
-    const abierto = box.style.display !== "none";
-    if(abierto){
-      box.style.display = "none";
-      box.innerHTML = "";
-      btn.textContent = "🧪 ¿Quieres saber los ingredientes?";
-    } else {
-      let html = "🧪 <b>Ingredientes:</b> " + resaltarAlergenos(esc(info.ingredients));
-      if(info.alergenos) html += "<br>⚠️ <b>Alérgenos:</b> " + resaltarAlergenos(esc(info.alergenos));
-      box.innerHTML = html;
-      box.style.display = "block";
-      btn.textContent = "🙈 Ocultar ingredientes";
-      hablar("Los ingredientes son: " + info.ingredients + (info.alergenos ? ". Contiene alérgenos: " + info.alergenos : ""));
-    }
-  };
-}
-document.getElementById("buscaWeb").onclick = async () => {
-  if(!actual) return;
-  const b=$("buscaWeb"), box=$("webResultados");
-  const abierto=box.style.display!=="none" && box.innerHTML.trim()!=="";
-  if(abierto){ box.style.display="none"; $("buscaMsg").textContent=""; b.textContent="🔎 Buscar dónde se fabrica"; return; }
-  await buscarFabricacionRealLQDD();
-};
 </script>
 
 <!-- LQDD: librería OCR aislada. No modifica el escáner de códigos existente. -->
@@ -1094,34 +694,6 @@ document.getElementById("buscaWeb").onclick = async () => {
     return mejor;
   }
 
-  // "Diccionario mundial" de ciudades y códigos postales: en vez de guardar dentro
-  // de la app una lista gigante (que nunca cubriría todas las ciudades del mundo y
-  // pesaría mucho), se consulta el callejero mundial abierto de OpenStreetMap
-  // solo cuando hace falta y solo si hay conexión. Si no responde a tiempo o falla,
-  // la app sigue funcionando igual con lo que ya detectó localmente.
-  async function consultarMapaMundialL(consulta){
-    if(!consulta) return null;
-    const ac=new AbortController(), t=setTimeout(()=>ac.abort(),7000);
-    try{
-      const url="https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&addressdetails=1&accept-language=es&q="+encodeURIComponent(consulta);
-      const resp=await fetch(url,{signal:ac.signal});
-      if(!resp.ok) return null;
-      const arr=await resp.json();
-      const it=Array.isArray(arr)?arr[0]:null;
-      if(!it || !it.address) return null;
-      const ad=it.address;
-      return {
-        ciudad:ad.city||ad.town||ad.village||ad.municipality||"",
-        provincia:ad.state||ad.province||ad.county||"",
-        pais:ad.country||""
-      };
-    }catch(e){
-      return null;
-    }finally{
-      clearTimeout(t);
-    }
-  }
-
   function limpiarOCR(t){
     return String(t||"")
       .replace(/\r/g,"\n")
@@ -1149,7 +721,7 @@ document.getElementById("buscaWeb").onclick = async () => {
     const r={fabricadoEn:"",fabricante:"",envasadoEn:"",envasadoPor:"",
       importadoPor:"",procesado:"",distribuidoPor:"",etiquetadoPor:"",
       acondicionadoPor:"",origen:"",direccion:"",ciudad:"",provincia:"",
-      pais:"",codigoPostal:"",mapaMundial:"",ingredientes:"",alergenos:"",raw};
+      pais:"",ingredientes:"",alergenos:"",raw};
 
     r.fabricadoEn=lineaDespues(raw,/(?:(?:fabricad[oa]|hech[oa]|cread[oa]|elaborad[oa])\s+en|manufactured\s+in|made\s+in|produced\s+in|producid[oa]\s+en)\s*(.*)$/i);
     if(!r.fabricadoEn){
@@ -1189,25 +761,11 @@ document.getElementById("buscaWeb").onclick = async () => {
     }
 
     // Código postal español + ciudad + provincia entre paréntesis.
-    // Si el código empieza por 01-52, es formato español: la provincia se saca
-    // directamente de la tabla oficial (PROV), no de lo que haya escrito la OCR.
     const cp=/\b(\d{5})\s+([^,\n(]+?)(?:\s*\(([^)\n]+)\))?(?:,\s*([A-Za-zÁÉÍÓÚáéíóúÑñ ]+))?(?=\s*$|\n)/i.exec(raw);
     if(cp){
-      r.codigoPostal=cp[1];
       r.ciudad=(cp[2]||"").trim();
-      const prefijo=cp[1].slice(0,2);
-      if(typeof PROV!=="undefined" && PROV[prefijo]){
-        r.provincia=PROV[prefijo];
-        r.pais="España";
-      }else{
-        r.provincia=(cp[3]||"").trim();
-        if(!r.pais) r.pais=detectarPaisL(raw);
-      }
-    }else{
-      // Cualquier otro código postal (aunque no sea español) que sirva de pista
-      // para preguntar al mapa mundial más adelante.
-      const cpg=/\b(\d{4,6}(?:-\d{3})?|[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2})\b/i.exec(raw);
-      if(cpg) r.codigoPostal=cpg[1];
+      r.provincia=(cp[3]||"").trim();
+      if(!r.pais) r.pais=detectarPaisL(raw);
     }
 
     // Si hay una declaración explícita, el país de fabricación/envasado se extrae de esa declaración.
@@ -1248,7 +806,6 @@ document.getElementById("buscaWeb").onclick = async () => {
     add("Ciudad",r.ciudad,"🏙️");
     add("Provincia",r.provincia,"🗺️");
     add("País detectado",r.pais,"🌐");
-    if(r.mapaMundial) filas.push("<div style='margin:5px 0;font-size:.85rem;color:#5a4200'>🗺️ Según el mapa mundial (OpenStreetMap): "+escL(r.mapaMundial)+" <i>(pista, no una declaración de la etiqueta)</i></div>");
     E("lqddTextoEtiqueta").innerHTML=filas.length?filas.join(""):"<small>No he encontrado una declaración clara en la etiqueta. Puedes hacer otra foto más cercana y con buena luz.</small>";
 
     const ib=E("lqddIngredientesEtiqueta"), bx=E("lqddIngredientesBox");
@@ -1262,15 +819,51 @@ document.getElementById("buscaWeb").onclick = async () => {
       bx.innerHTML=h;bx.style.display="block";ib.textContent="🙈 Ocultar ingredientes";
       if(typeof hablar==="function") hablar("Los ingredientes son: "+r.ingredientes+(r.alergenos?". Alérgenos: "+r.alergenos:""));
     };
-    // La lectura de etiqueta actualiza la ficha principal y el historial del mismo producto.
+
+    // Guardar la lectura de la etiqueta en la ficha principal y en el historial.
     try{
       if(window.actual && window.actual.codigo){
-        integrarEtiquetaEnResultadoL(r);
-        window.lqddGuardarEtiquetaHistorial(window.actual.codigo,r);
-      }else{
-        etiquetaPendienteL=r;
+        const codigo=window.actual.codigo;
+        const info=window.actual.info || {};
+        info.etiquetaL=Object.assign({}, r);
+        window.actual.info=info;
+
+        // Actualiza la ficha principal con los datos reales de la etiqueta.
+        const principal=document.getElementById("fabrica");
+        if(principal){
+          let bloque="";
+          const addP=(label,val,icon)=>{if(val) bloque += "<br>"+icon+" <b>"+label+":</b> "+escL(val);};
+          addP("Fabricado en",r.fabricadoEn,"🏭");
+          addP("Fabricante",r.fabricante,"🏢");
+          addP("Envasado en",r.envasadoEn,"📦");
+          addP("Envasado por",r.envasadoPor,"📦");
+          addP("Importado por",r.importadoPor,"🚚");
+          addP("Procesado",r.procesado,"⚙️");
+          addP("Distribuido por",r.distribuidoPor,"🚛");
+          addP("Etiquetado por",r.etiquetadoPor,"🏷️");
+          addP("Acondicionado por",r.acondicionadoPor,"🔧");
+          addP("Origen declarado",r.origen,"🌍");
+          addP("Dirección",r.direccion,"📍");
+          addP("Ciudad",r.ciudad,"🏙️");
+          addP("Provincia",r.provincia,"🗺️");
+          addP("País detectado",r.pais,"🌐");
+          const titulo="<br><br>🏷️ <b>DATOS LEÍDOS DE LA ETIQUETA</b>";
+          principal.innerHTML += titulo + bloque;
+        }
+
+        // Sobrescribe la entrada del mismo código en el historial.
+        const h=cargarHist();
+        const i=h.findIndex(x=>x.codigo===codigo);
+        if(i>=0){
+          h[i].etiqueta=Object.assign({},r);
+          h[i].snapshot=Object.assign({},h[i].snapshot||{}, {info:info});
+          if(r.fabricadoEn) h[i].fab="según etiqueta: "+r.fabricadoEn;
+          h[i].fecha=new Date().toLocaleString("es-ES");
+          localStorage.setItem("hist",JSON.stringify(h.slice(0,50)));
+          pintarHist();
+        }
       }
-    }catch(e){ etiquetaPendienteL=r; }
+    }catch(e){ console.warn("No se pudo guardar la etiqueta:",e); }
   }
 
   function prepararImagenEtiquetaL(file, conContraste){
@@ -1307,14 +900,6 @@ document.getElementById("buscaWeb").onclick = async () => {
     });
   }
 
-  function conLimite(promesa, ms, mensaje){
-    let temporizador;
-    const limite=new Promise((_,reject)=>{
-      temporizador=setTimeout(()=>reject(new Error(mensaje||"tiempo agotado")),ms);
-    });
-    return Promise.race([promesa,limite]).finally(()=>clearTimeout(temporizador));
-  }
-
   function hayDatoEtiquetaL(r){
     return !!(r.fabricadoEn||r.fabricante||r.envasadoEn||r.envasadoPor||r.importadoPor||r.procesado||r.distribuidoPor||r.etiquetadoPor||r.acondicionadoPor||r.origen||r.direccion||r.ciudad||r.provincia||r.pais||r.ingredientes);
   }
@@ -1337,7 +922,7 @@ document.getElementById("buscaWeb").onclick = async () => {
       }});
       try{await worker.setParameters({tessedit_pageseg_mode:"6",preserve_interword_spaces:"1",user_defined_dpi:"300"});}catch(_e){}
 
-      let ret=await conLimite(worker.recognize(imagen), 20000, "OCR: primera pasada demasiado lenta");
+      let ret=await worker.recognize(imagen);
       let texto=String(ret&&ret.data&&ret.data.text||"");
       let datos=extraerEtiquetaL(texto);
 
@@ -1347,25 +932,9 @@ document.getElementById("buscaWeb").onclick = async () => {
       if(!hayDatoEtiquetaL(datos)){
         barra.style.width="55%";pct.textContent="55%";
         const imagen2=await prepararImagenEtiquetaL(file,false);
-        ret=await conLimite(worker.recognize(imagen2), 20000, "OCR: segunda pasada demasiado lenta");
+        ret=await worker.recognize(imagen2);
         texto=String(ret&&ret.data&&ret.data.text||"");
         datos=extraerEtiquetaL(texto);
-      }
-
-      // Si con los datos locales no queda claro el país, pero sí hay una pista
-      // (ciudad, código postal o dirección), se consulta el callejero mundial
-      // real (OpenStreetMap) para intentar confirmarlo. Es opcional: si no hay
-      // conexión o tarda demasiado, se sigue sin bloquear la app.
-      if(!datos.pais && (datos.ciudad || datos.codigoPostal || datos.direccion)){
-        barra.style.width="85%";pct.textContent="🌍";
-        const consulta=[datos.codigoPostal,datos.ciudad||datos.direccion].filter(Boolean).join(" ");
-        const geo=await consultarMapaMundialL(consulta);
-        if(geo && geo.pais){
-          datos.pais=geo.pais;
-          datos.mapaMundial=geo.pais+(geo.ciudad?" ("+geo.ciudad+")":"");
-          if(!datos.ciudad) datos.ciudad=geo.ciudad;
-          if(!datos.provincia) datos.provincia=geo.provincia;
-        }
       }
 
       // Si OCR sí leyó texto pero no encontró una etiqueta estándar, mostramos el texto útil.
@@ -1388,7 +957,7 @@ document.getElementById("buscaWeb").onclick = async () => {
       barra.style.width="100%";pct.textContent="Error";
       const lento=e && /demasiado lenta/i.test(e.message||"");
       E("lqddTextoEtiqueta").innerHTML=lento
-        ? "<b>⚠️ La lectura ha tardado demasiado y se ha detenido.</b><br><small>Prueba con una foto más pequeña, más cerca de la etiqueta y con buena luz.</small>"
+        ? "<b>⚠️ La lectura está tardando más de lo habitual.</b><br><small>La aplicación seguirá intentando leer la etiqueta. Mantén la foto estable y con buena luz.</small>"
         : "<b>⚠️ No se pudo leer la etiqueta.</b><br><small>Comprueba la conexión a Internet y haz una foto nítida, de cerca y con buena iluminación.</small>";
       res.style.display="block";
       setTimeout(()=>{estado.style.display="none";},700);
