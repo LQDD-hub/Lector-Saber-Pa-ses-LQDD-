@@ -993,11 +993,11 @@ document.getElementById("buscaWeb").onclick = async () => {
     const r={fabricadoEn:"",fabricante:"",envasadoEn:"",envasadoPor:"",
       importadoPor:"",procesado:"",distribuidoPor:"",etiquetadoPor:"",
       acondicionadoPor:"",origen:"",direccion:"",ciudad:"",provincia:"",
-      pais:"",ingredientes:"",alergenos:"",raw};
+      pais:"",codigoPostal:"",ingredientes:"",alergenos:"",raw};
 
-    r.fabricadoEn=lineaDespues(raw,/(?:(?:fabricad[oa]|hech[oa]|cread[oa]|elaborad[oa]|producid[oa]|manufacturad[oa])\s+en|(?:pa[ií]s|lugar)\s+de\s+(?:fabricaci[oó]n|producci[oó]n|origen)|fabricaci[oó]n\s+(?:en|de)|producci[oó]n\s+(?:en|de)|originari[oa]\s+de|manufactured\s+in|made\s+in|produced\s+in|manufactured\s+from|product\s+of|country\s+of\s+(?:manufacture|production|origin)|made\s+for)\s*(.*)$/i);
+    r.fabricadoEn=lineaDespues(raw,/(?:(?:fabricad[oa]|hech[oa]|cread[oa]|elaborad[oa])\s+en|manufactured\s+in|made\s+in|produced\s+in|producid[oa]\s+en)\s*(.*)$/i);
     if(!r.fabricadoEn){
-      const m=raw.match(/(?:(?:fabricad[oa]|hech[oa]|cread[oa]|elaborad[oa]|producid[oa]|manufacturad[oa])\s+en|(?:pa[ií]s|lugar)\s+de\s+(?:fabricaci[oó]n|producci[oó]n|origen)|fabricaci[oó]n\s+(?:en|de)|producci[oó]n\s+(?:en|de)|originari[oa]\s+de|manufactured\s+in|made\s+in|produced\s+in|manufactured\s+from|product\s+of|country\s+of\s+(?:manufacture|production|origin)|made\s+for)\s*([^\n,.]+)/i);
+      const m=raw.match(/(?:(?:fabricad[oa]|hech[oa]|cread[oa]|elaborad[oa])\s+en|manufactured\s+in|made\s+in|produced\s+in|producid[oa]\s+en)\s*([^\n,.]+)/i);
       if(m) r.fabricadoEn=m[1].trim();
     }
 
@@ -1032,21 +1032,80 @@ document.getElementById("buscaWeb").onclick = async () => {
       if(lp) r.pais=detectarPaisL(lp)||"";
     }
 
-    // Código postal español + ciudad + provincia entre paréntesis.
-    const cp=/\b(\d{5})\s+([^,\n(]+?)(?:\s*\(([^)\n]+)\))?(?:,\s*([A-Za-zÁÉÍÓÚáéíóúÑñ ]+))?(?=\s*$|\n)/i.exec(raw);
+    // Código postal: lo guardamos siempre que sea un CP claro.
+    // El código postal permite identificar el país en formatos conocidos y,
+    // mediante geocodificación, obtener la localidad/provincia cuando existe.
+    const cpSolo=/\b(\d{5})\b/.exec(raw);
+    if(cpSolo){
+      r.codigoPostal=cpSolo[1];
+      // En España los 2 primeros dígitos del CP identifican la provincia.
+      const pref=r.codigoPostal.slice(0,2);
+      const provinciasES={
+        "01":"Álava","02":"Albacete","03":"Alicante","04":"Almería","05":"Ávila","06":"Badajoz","07":"Baleares","08":"Barcelona","09":"Burgos","10":"Cáceres","11":"Cádiz","12":"Castellón","13":"Ciudad Real","14":"Córdoba","15":"A Coruña","16":"Cuenca","17":"Girona","18":"Granada","19":"Guadalajara","20":"Gipuzkoa","21":"Huelva","22":"Huesca","23":"Jaén","24":"León","25":"Lleida","26":"La Rioja","27":"Lugo","28":"Madrid","29":"Málaga","30":"Murcia","31":"Navarra","32":"Ourense","33":"Asturias","34":"Palencia","35":"Las Palmas","36":"Pontevedra","37":"Salamanca","38":"Santa Cruz de Tenerife","39":"Cantabria","40":"Segovia","41":"Sevilla","42":"Soria","43":"Tarragona","44":"Teruel","45":"Toledo","46":"Valencia","47":"Valladolid","48":"Bizkaia","49":"Zamora","50":"Zaragoza","51":"Ceuta","52":"Melilla"
+      };
+      if(provinciasES[pref]){
+        r.provincia=r.provincia||provinciasES[pref];
+        r.pais=r.pais||"España";
+      }
+    }
+
+    // Código postal + ciudad: solo aceptamos una ciudad cuando la estructura
+    // aporta una provincia entre paréntesis o una localidad claramente separada
+    // por coma. Así evitamos que frases como "Dermatológicamente testado"
+    // sean interpretadas por el OCR como si fueran una ciudad.
+    const cp=/\b(\d{5})\s+([^,\n(]{2,60}?)(?:\s*\(([^)\n]{2,60})\))\s*(?:,\s*([^\n]+))?/i.exec(raw);
     if(cp){
-      r.ciudad=(cp[2]||"").trim();
-      r.provincia=(cp[3]||"").trim();
-      if(!r.pais) r.pais=detectarPaisL(raw);
+      const posibleCiudad=(cp[2]||"").trim().replace(/\s+/g," ");
+      const posibleProvincia=(cp[3]||"").trim().replace(/\s+/g," ");
+      const basura=/^(?:dermatologicamente|dermatológicamente|ingredientes|ingredients|precauciones|precautions|uso|uso|contenido|cont\.?(?:\s*net)?|net|ml|e|testado|tested)$/i;
+      if(posibleProvincia && posibleCiudad.length>=2 && !basura.test(posibleCiudad)) {
+        r.ciudad=posibleCiudad;
+        r.provincia=posibleProvincia;
+        if(!r.pais) r.pais=detectarPaisL(cp[4]||posibleProvincia)||detectarPaisL(raw)||"";
+      }
     }
 
     // Si hay una declaración explícita, el país de fabricación/envasado se extrae de esa declaración.
+    // IMPORTANTE: no tomamos simplemente el primer país que aparezca en toda la etiqueta,
+    // porque puede ser un importador, distribuidor, dirección o una mención secundaria.
     if(r.fabricadoEn) r.fabricadoEn=detectarPaisL(r.fabricadoEn)||r.fabricadoEn;
     if(r.envasadoEn) r.envasadoEn=detectarPaisL(r.envasadoEn)||r.envasadoEn;
-    if(!r.origen) r.origen=detectarPaisL(raw)||"";
-    if(!r.pais) r.pais=detectarPaisL(raw)||"";
+
+    // "Origen declarado" solo procede de una frase explícita como "País de origen",
+    // "Country of origin" o "Product of". Nunca se rellena buscando cualquier país del texto.
+    // Así evitamos errores como mostrar China cuando la etiqueta dice "Made in Germany".
+
+    // País detectado: primero manda la declaración de fabricación; después, el origen
+    // explícitamente declarado. Solo usamos una línea "País/Country:" si existe.
+    if(r.fabricadoEn) r.pais=detectarPaisL(r.fabricadoEn)||r.pais||"";
+    else if(r.origen) r.pais=detectarPaisL(r.origen)||r.pais||"";
 
     return r;
+  }
+
+  async function completarPorCodigoPostalL(r){
+    if(!r.codigoPostal) return r;
+    try{
+      const paisHint=r.pais||"España";
+      const url="https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&addressdetails=1&accept-language=es&postalcode="+encodeURIComponent(r.codigoPostal)+"&country="+encodeURIComponent(paisHint);
+      const ac=new AbortController();
+      const timer=setTimeout(()=>ac.abort(),5000);
+      const resp=await fetch(url,{signal:ac.signal,headers:{"Accept":"application/json"}});
+      clearTimeout(timer);
+      if(!resp.ok) return r;
+      const arr=await resp.json();
+      if(!Array.isArray(arr)||!arr.length) return r;
+      const candidatos=arr.filter(x=>x&&x.address);
+      if(!candidatos.length) return r;
+      const a=candidatos[0].address;
+      const pais=a.country||r.pais;
+      const provincia=a.state||a.province||a.region||r.provincia;
+      const ciudad=a.city||a.town||a.village||a.municipality||a.city_district||"";
+      if(pais) r.pais=pais;
+      if(provincia) r.provincia=provincia;
+      if(ciudad && !r.ciudad) r.ciudad=ciudad;
+      return r;
+    }catch(_e){ return r; }
   }
 
   function renderEtiquetaL(r){
@@ -1063,6 +1122,7 @@ document.getElementById("buscaWeb").onclick = async () => {
     add("Acondicionado por",r.acondicionadoPor,"🔧");
     add("Origen declarado",r.origen,"🌍");
     add("Dirección",r.direccion,"📍");
+    add("Código postal",r.codigoPostal,"📮");
     add("Ciudad",r.ciudad,"🏙️");
     add("Provincia",r.provincia,"🗺️");
     add("País detectado",r.pais,"🌐");
@@ -1089,7 +1149,7 @@ document.getElementById("buscaWeb").onclick = async () => {
         const img=new Image();
         img.onerror=()=>reject(new Error("La imagen no es válida"));
         img.onload=()=>{
-          const max=1400;
+          const max=1800;
           const escala=Math.min(1,max/Math.max(img.naturalWidth||img.width,img.naturalHeight||img.height));
           const w=Math.max(1,Math.round((img.naturalWidth||img.width)*escala));
           const h=Math.max(1,Math.round((img.naturalHeight||img.height)*escala));
@@ -1104,7 +1164,7 @@ document.getElementById("buscaWeb").onclick = async () => {
             a[i]=a[i+1]=a[i+2]=v;
           }
           x.putImageData(d,0,0);
-          resolve(c.toDataURL("image/jpeg",0.84));
+          resolve(c.toDataURL("image/jpeg",0.92));
         };
         img.src=fr.result;
       };
@@ -1116,50 +1176,38 @@ document.getElementById("buscaWeb").onclick = async () => {
     return !!(r.fabricadoEn||r.fabricante||r.envasadoEn||r.envasadoPor||r.importadoPor||r.procesado||r.distribuidoPor||r.etiquetadoPor||r.acondicionadoPor||r.origen||r.direccion||r.ciudad||r.provincia||r.pais||r.ingredientes);
   }
 
-  // Mantener el motor OCR cargado hace la siguiente lectura mucho más rápida.
-  let workerOCRL=null;
-  let workerOCRPromiseL=null;
-
-  async function obtenerWorkerOCRL(barra,pct){
-    if(workerOCRL) return workerOCRL;
-    if(workerOCRPromiseL) return workerOCRPromiseL;
-    workerOCRPromiseL=Tesseract.createWorker("spa+eng",1,{logger:m=>{
-      if(m && typeof m.progress==="number"){
-        // La carga inicial ocupa 10%; el OCR real ocupa el 10-95%.
-        const p=Math.max(10,Math.min(95,Math.round(10+m.progress*85)));
-        barra.style.width=p+"%";pct.textContent=p+"%";
-      }
-    }}).then(async w=>{
-      try{await w.setParameters({tessedit_pageseg_mode:"6",preserve_interword_spaces:"1",user_defined_dpi:"300"});}catch(_e){}
-      workerOCRL=w;
-      workerOCRPromiseL=null;
-      return w;
-    }).catch(e=>{workerOCRPromiseL=null;throw e;});
-    return workerOCRPromiseL;
-  }
-
   async function leerEtiquetaL(file){
     const estado=E("lqddEstadoEtiqueta"), barra=E("lqddBarraEtiqueta"), pct=E("lqddPorcentajeEtiqueta"), res=E("lqddResultadoEtiqueta");
-    estado.style.display="block";res.style.display="none";barra.style.width="3%";pct.textContent="3%";
+    estado.style.display="block";res.style.display="none";barra.style.width="2%";pct.textContent="2%";
+    let worker=null;
     try{
       if(!file) return;
       if(!window.Tesseract) throw new Error("OCR no disponible");
-      barra.style.width="7%";pct.textContent="7%";
       const imagen=await prepararImagenEtiquetaL(file);
-      barra.style.width="10%";pct.textContent="10%";
+      barra.style.width="5%";pct.textContent="5%";
 
-      const worker=await obtenerWorkerOCRL(barra,pct);
+      worker=await Tesseract.createWorker("spa+eng",1,{logger:m=>{
+        if(m && typeof m.progress==="number"){
+          const p=Math.max(5,Math.min(96,Math.round(m.progress*100)));
+          barra.style.width=p+"%";pct.textContent=p+"%";
+        }
+      }});
+      try{await worker.setParameters({tessedit_pageseg_mode:"6",preserve_interword_spaces:"1",user_defined_dpi:"300"});}catch(_e){}
+
       let ret=await worker.recognize(imagen);
       let texto=String(ret&&ret.data&&ret.data.text||"");
       let datos=extraerEtiquetaL(texto);
 
-      // Solo hacemos una segunda pasada si realmente no se ha detectado ningún dato útil.
+      // Segunda pasada con la foto original si la primera no encontró datos claros.
       if(!hayDatoEtiquetaL(datos)){
-        barra.style.width="70%";pct.textContent="70%";
+        barra.style.width="65%";pct.textContent="65%";
         ret=await worker.recognize(file);
         texto=String(ret&&ret.data&&ret.data.text||"");
         datos=extraerEtiquetaL(texto);
       }
+
+      // Si hay código postal, intentamos completar automáticamente ciudad, provincia y país.
+      datos=await completarPorCodigoPostalL(datos);
 
       // Si OCR sí leyó texto pero no encontró una etiqueta estándar, mostramos el texto útil.
       if(!hayDatoEtiquetaL(datos)){
@@ -1182,6 +1230,8 @@ document.getElementById("buscaWeb").onclick = async () => {
       E("lqddTextoEtiqueta").innerHTML="<b>⚠️ No se pudo leer la etiqueta.</b><br><small>Comprueba la conexión a Internet y haz una foto nítida, de cerca y con buena iluminación.</small>";
       res.style.display="block";
       setTimeout(()=>{estado.style.display="none";},700);
+    }finally{
+      if(worker){try{await worker.terminate();}catch(_e){}}
     }
   }
 
