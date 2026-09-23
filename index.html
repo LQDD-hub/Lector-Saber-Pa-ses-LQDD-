@@ -153,49 +153,16 @@ function cargarHist(){ try{ return JSON.parse(localStorage.getItem("hist")||"[]"
 function guardar(codigo, pais, fab, extra){
   const h = cargarHist().filter(x => x.codigo !== codigo);
   h.unshift({codigo, pais, fab, fecha:new Date().toLocaleString("es-ES"),
-    nombre:(extra&&extra.nombre)||"", frase:(extra&&extra.frase)||"",
-    snapshot:(extra&&extra.snapshot)||null,
-    etiqueta:(extra&&extra.etiqueta)||null});
+    nombre:(extra&&extra.nombre)||"", frase:(extra&&extra.frase)||"", snapshot:(extra&&extra.snapshot)||null,
+    fabricacion:(extra&&extra.fabricacion)||null, etiqueta:(extra&&extra.etiqueta)||null});
   try{ localStorage.setItem("hist", JSON.stringify(h.slice(0,50))); }catch(e){}
   pintarHist();
-}
-
-function guardarEtiquetaHistorial(datos, textoOCR){
-  try{
-    const h=cargarHist();
-    const codigo=(actual&&actual.codigo)?String(actual.codigo):"";
-    if(!codigo) return;
-    const idx=h.findIndex(x=>String(x.codigo)===codigo);
-    if(idx<0) return;
-    h[idx].etiqueta={datos:datos||{}, textoOCR:String(textoOCR||"").slice(0,6000),
-      fecha:new Date().toLocaleString("es-ES")};
-    localStorage.setItem("hist",JSON.stringify(h.slice(0,50)));
-    pintarHist();
-  }catch(e){}
-}
-
-function mostrarEtiquetaHistorial(etiqueta){
-  if(!etiqueta) return;
-  const r=E?E("lqddResultadoEtiqueta"):document.getElementById("lqddResultadoEtiqueta");
-  const t=E?E("lqddTextoEtiqueta"):document.getElementById("lqddTextoEtiqueta");
-  if(!r||!t) return;
-  const datos=etiqueta.datos||{};
-  if(Object.keys(datos).length){
-    try{ renderEtiquetaL(datos); }
-    catch(e){ t.innerHTML=escHist(etiqueta.textoOCR||""); }
-  }else if(etiqueta.textoOCR){
-    t.innerHTML="<b>📝 Texto detectado:</b><div style='white-space:pre-wrap;margin-top:6px'>"+escHist(etiqueta.textoOCR)+"</div>";
-  }
-  r.style.display="block";
 }
 function abrirHistorial(idx){
   const h = cargarHist(), entry = h[idx];
   if(!entry || !entry.snapshot) return;
   actual = {codigo:entry.codigo, prefijo:entry.snapshot.prefijo, info:entry.snapshot.info, gs1Raw:entry.snapshot.gs1Raw};
   pintar(true, true);
-  if(entry.etiqueta){
-    setTimeout(()=>mostrarEtiquetaHistorial(entry.etiqueta),0);
-  }
   const r = document.getElementById("resultado");
   if(r) r.scrollIntoView({behavior:"smooth", block:"start"});
 }
@@ -205,25 +172,13 @@ function pintarHist(){
     ? h.map((x,i) => '<div class="item" data-idx="'+i+'" style="cursor:pointer">'+bandera(x.pais)+' <b>'+escHist(x.nombre||x.pais)+'</b>'
         +(x.frase?' · <span style="color:#1e8e3e;font-weight:bold">'+escHist(x.frase)+'</span>':'')
         +(x.fab?(x.fab.indexOf('según')===0?' · 🏷️ ':' · 🏭 ')+escHist(x.fab):'')
-        +(x.etiqueta?' · 🏷️ Etiqueta leída':'')
+        +(x.fabricacion&&x.fabricacion.length?'<div style="margin-top:6px;font-size:.86rem">🏭 <b>Fabricación:</b> '+escHist(x.fabricacion.map(f=>f.ciudad?f.ciudad+', '+f.pais:(f.pais||'')).filter(Boolean).join(' · '))+'</div>':'')
+        +(x.etiqueta&&x.etiqueta.fabricadoEn?'<div style="margin-top:4px;font-size:.84rem">🏷️ <b>Etiqueta:</b> '+escHist(x.etiqueta.fabricadoEn)+'</div>':'')
         +'<small>'+escHist(x.codigo)+' · '+escHist(x.fecha)+'</small></div>').join("")
     : '<small>Aún no has escaneado nada.</small>';
   document.querySelectorAll("#hist .item").forEach(el=>{
     el.onclick = () => abrirHistorial(+el.getAttribute("data-idx"));
   });
-}
-function mostrarEtiquetaHistorial(etiqueta){
-  if(!etiqueta) return;
-  const r=document.getElementById("lqddResultadoEtiqueta");
-  const t=document.getElementById("lqddTextoEtiqueta");
-  if(!r||!t) return;
-  const datos=etiqueta.datos||{};
-  if(Object.keys(datos).length && typeof window.lqddRenderEtiqueta==="function"){
-    window.lqddRenderEtiqueta(datos);
-  }else if(etiqueta.textoOCR){
-    t.innerHTML="<b>📝 Texto detectado:</b><div style='white-space:pre-wrap;margin-top:6px'>"+escHist(etiqueta.textoOCR)+"</div>";
-  }
-  r.style.display="block";
 }
 document.getElementById("borrar").onclick = () => { try{ localStorage.removeItem("hist"); }catch(e){} pintarHist(); };
 pintarHist();
@@ -596,6 +551,144 @@ async function buscarProducto(codigo){
 function cargarFab(c){ try{ return JSON.parse(localStorage.getItem("fab_"+c)||"null"); }catch(e){ return null; } }
 function guardarFab(c,p){ try{ localStorage.setItem("fab_"+c, JSON.stringify(p)); }catch(e){} }
 
+// ---------- Memoria LQDD de fabricación ----------
+// Se deja vacía hasta conectar Supabase. Mientras tanto, la aplicación guarda
+// los resultados en la ficha local del producto. Cuando pongamos las credenciales
+// públicas de Supabase, la misma función pasará a compartirlos entre usuarios.
+const LQDD_SUPABASE_URL = "";
+const LQDD_SUPABASE_KEY = "";
+
+function normalizarFabricacionLQDD(x){
+  return {
+    pais:String(x.pais||"").trim(),
+    provincia:String(x.provincia||"").trim(),
+    ciudad:String(x.ciudad||"").trim(),
+    direccion:String(x.direccion||"").trim(),
+    fabricante:String(x.fabricante||"").trim(),
+    estado:String(x.estado||"asociado").trim(),
+    evidencia:String(x.evidencia||"").trim(),
+    fuente:String(x.fuente||"").trim(),
+    confirmaciones:Number(x.confirmaciones||1)||1
+  };
+}
+
+async function consultarMemoriaFabricacion(codigo){
+  if(!LQDD_SUPABASE_URL || !LQDD_SUPABASE_KEY) return [];
+  try{
+    const u=LQDD_SUPABASE_URL.replace(/\/$/,"")+"/rest/v1/fabricacion?codigo_barras=eq."+encodeURIComponent(String(codigo).replace(/\D/g,""))+"&select=*";
+    const r=await fetch(u,{headers:{apikey:LQDD_SUPABASE_KEY,Authorization:"Bearer "+LQDD_SUPABASE_KEY}});
+    if(!r.ok) return [];
+    const arr=await r.json();
+    return Array.isArray(arr)?arr.map(normalizarFabricacionLQDD):[];
+  }catch(e){ return []; }
+}
+
+async function guardarEnMemoriaFabricacion(codigo, datos){
+  if(!LQDD_SUPABASE_URL || !LQDD_SUPABASE_KEY) return false;
+  try{
+    const d=normalizarFabricacionLQDD(datos);
+    const body={codigo_barras:String(codigo).replace(/\D/g,""),producto:String((actual&&actual.info&&actual.info.nombre)||""),marca:String((actual&&actual.info&&actual.info.marca)||""),fabricante:d.fabricante,pais:d.pais,provincia:d.provincia,ciudad:d.ciudad,direccion:d.direccion,tipo_evidencia:d.evidencia,estado:d.estado,fuente:d.fuente,confirmaciones:d.confirmaciones};
+    const u=LQDD_SUPABASE_URL.replace(/\/$/,"")+"/rest/v1/fabricacion";
+    const r=await fetch(u,{method:"POST",headers:{apikey:LQDD_SUPABASE_KEY,Authorization:"Bearer "+LQDD_SUPABASE_KEY,"Content-Type":"application/json",Prefer:"resolution=merge-duplicates"},body:JSON.stringify(body)});
+    return r.ok;
+  }catch(e){ return false; }
+}
+
+function obtenerFabricacionFicha(codigo){
+  try{
+    const h=cargarHist(), e=h.find(x=>String(x.codigo)===String(codigo));
+    return Array.isArray(e&&e.fabricacion)?e.fabricacion:[];
+  }catch(e){return [];}
+}
+
+function actualizarFichaFabricacion(codigo, lugares){
+  try{
+    const h=cargarHist(), i=h.findIndex(x=>String(x.codigo)===String(codigo));
+    if(i<0) return;
+    const actuales=Array.isArray(h[i].fabricacion)?h[i].fabricacion:[];
+    const todos=[...actuales,...lugares.map(normalizarFabricacionLQDD)];
+    const mapa=new Map();
+    todos.forEach(x=>{
+      const k=[norm(x.pais),norm(x.provincia),norm(x.ciudad),norm(x.fabricante)].join("|");
+      if(!mapa.has(k)) mapa.set(k,x);
+      else mapa.get(k).confirmaciones=Math.max(Number(mapa.get(k).confirmaciones||1),Number(x.confirmaciones||1));
+    });
+    h[i].fabricacion=[...mapa.values()];
+    if(lugares[0]&&lugares[0].pais) h[i].fab="fabricado en "+lugares[0].pais+(lugares[0].ciudad?" · "+lugares[0].ciudad:"");
+    localStorage.setItem("hist",JSON.stringify(h.slice(0,50)));
+    pintarHist();
+  }catch(e){}
+}
+
+function actualizarEtiquetaEnFicha(codigo,r){
+  try{
+    const h=cargarHist(), i=h.findIndex(x=>String(x.codigo)===String(codigo));
+    if(i<0) return;
+    h[i].etiqueta={fabricadoEn:r.fabricadoEn||"",fabricante:r.fabricante||"",envasadoEn:r.envasadoEn||"",envasadoPor:r.envasadoPor||"",origen:r.origen||"",direccion:r.direccion||"",ciudad:r.ciudad||"",provincia:r.provincia||"",pais:r.pais||"",raw:r.raw||""};
+    if(r.fabricadoEn||r.fabricante||r.ciudad||r.pais){
+      const pais=r.fabricadoEn||r.pais||"";
+      if(pais){
+        const lugar=normalizarFabricacionLQDD({pais,provincia:r.provincia,ciudad:r.ciudad,direccion:r.direccion,fabricante:r.fabricante,estado:r.fabricadoEn?"confirmado":"asociado",evidencia:r.fabricadoEn?"Etiqueta: Fabricado en":"Etiqueta OCR",fuente:"Lectura de etiqueta LQDD",confirmaciones:1});
+        actualizarFichaFabricacion(codigo,[lugar]);
+      }
+    }
+    localStorage.setItem("hist",JSON.stringify(h.slice(0,50)));
+    pintarHist();
+  }catch(e){}
+}
+window.lqddGuardarEtiquetaHistorial=actualizarEtiquetaEnFicha;
+
+// ---------- Búsqueda REAL del producto concreto ----------
+async function buscarFabricacionRealLQDD(){
+  if(!actual) return;
+  const b=$("buscaWeb"), msg=$("buscaMsg"), box=$("webResultados");
+  b.disabled=true; b.textContent="🔎 Buscando fabricación real..."; msg.textContent=""; box.style.display="block";
+  try{
+    const codigo=String(actual.codigo||"").replace(/\D/g,"");
+    // 1) Memoria colectiva de LQDD (cuando Supabase esté conectado).
+    let lugares=await consultarMemoriaFabricacion(codigo);
+    let origen="memoria LQDD";
+
+    // 2) Si no hay memoria, consulta EXACTAMENTE este código en las bases públicas.
+    if(!lugares.length){
+      const info=await buscarProducto(codigo);
+      const evid=Array.isArray(info.evidencias)?info.evidencias:[];
+      lugares=evid.filter(e=>e&&e.pais).map(e=>normalizarFabricacionLQDD({
+        pais:e.pais, fabricante:info.producer||"", estado:e.nivel||"asociado", evidencia:e.detalle||e.fuente||"", fuente:e.fuente||"Open Products Facts", confirmaciones:1
+      }));
+      origen="búsqueda exacta por código de barras";
+      // Si hay un lugar declarado, lo guardamos localmente y, cuando haya Supabase,
+      // también en la memoria colectiva.
+      if(lugares.length){
+        actualizarFichaFabricacion(codigo,lugares);
+        await Promise.all(lugares.map(x=>guardarEnMemoriaFabricacion(codigo,x)));
+      }
+      actual.info=info;
+    }
+
+    // Quitar duplicados antes de mostrar.
+    const mapa=new Map();
+    lugares.forEach(x=>{const k=[norm(x.pais),norm(x.provincia),norm(x.ciudad),norm(x.fabricante)].join("|");if(!mapa.has(k))mapa.set(k,x);});
+    lugares=[...mapa.values()];
+
+    if(lugares.length){
+      box.innerHTML=`<div style="background:#fff7d6;border:1px solid #e0c45c;border-radius:10px;padding:10px"><b>🏭 Fabricación encontrada para ESTE producto</b><div style="font-size:.8rem;color:#5a4200;margin:4px 0 8px">Código: ${esc(codigo)}</div>${lugares.map(x=>`<div style="background:#fff;border-radius:8px;padding:9px;margin-top:7px;border:1px solid #ddd">${x.estado==="confirmado"?"🟢 Confirmado":"🟡 Asociado"}<br>📍 <b>${esc((x.ciudad?x.ciudad+", ":"")+(x.provincia?x.provincia+", ":"")+x.pais)}</b>${x.fabricante?"<br>🏢 "+esc(x.fabricante):""}${x.evidencia?"<br>🏷️ "+esc(x.evidencia):""}</div>`).join("")}<small style="display:block;margin-top:8px">Fuente: ${esc(origen)}. Si no hay evidencia suficiente, se indica como asociado.</small></div>`;
+      msg.textContent="✅ Resultado guardado en la ficha de este producto.";
+      b.textContent="🙈 Ocultar resultado";
+      hablar("He encontrado información de fabricación para este producto y la he guardado en su ficha.");
+    }else{
+      box.innerHTML='<div style="background:#fff7d6;border:1px solid #e0c45c;border-radius:10px;padding:10px"><b>🔎 Búsqueda exacta sin resultado confirmado</b><br><small>No he encontrado una evidencia suficiente para afirmar dónde se fabrica este código de barras. No voy a sustituirlo por productos parecidos.</small></div>';
+      msg.textContent="⚠️ No encontrado con evidencia suficiente.";
+      b.textContent="🔎 Buscar dónde se fabrica";
+      hablar("No he encontrado una evidencia suficiente de fabricación para este producto.");
+    }
+  }catch(e){
+    box.innerHTML='<div style="background:#ffd3d3;border:1px solid #d32f2f;border-radius:10px;padding:10px">❌ No se pudo completar la búsqueda exacta. Comprueba la conexión.</div>';
+    msg.textContent="❌ Error de búsqueda";
+    b.textContent="🔎 Buscar dónde se fabrica";
+  }finally{ b.disabled=false; }
+}
+
 // ---------- Búsqueda automática: otros productos de la misma marca y nombre ----------
 async function pedirJSON(url,ms){
   const ac=new AbortController(), t=setTimeout(()=>ac.abort(),ms||10000);
@@ -719,6 +812,7 @@ function pintarResultadosWeb(r){
 }
 
 let actual = null; // {codigo, prefijo, info}
+window.actual = actual;
 let cacheWeb = null; // último resultado de "productos similares" para el producto actual
 const $ = id => document.getElementById(id);
 
@@ -732,7 +826,7 @@ async function mostrar(codigo){
   $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("gs1Datos").innerHTML=""; $("buscaMsg").textContent=""; $("webResultados").innerHTML=""; $("webResultados").style.display=""; $("buscaWeb").style.display="none"; $("buscaWeb").textContent="🔎 Buscar dónde se fabrica"; cacheWeb=null;
   if(!prefijo){ $("pais").textContent="Código no válido"; hablar("Código no válido"); return; }
   $("pais").textContent="🔎 Consultando información del producto...";
-  const info=await buscarProducto(codigoProducto); actual={codigo:codigoProducto,prefijo,info,gs1Raw}; pintar();
+  const info=await buscarProducto(codigoProducto); actual={codigo:codigoProducto,prefijo,info,gs1Raw}; window.actual=actual; pintar();
 }
 
 
@@ -924,38 +1018,10 @@ if(verIngredientesBtn){
 }
 document.getElementById("buscaWeb").onclick = async () => {
   if(!actual) return;
-  const b=$("buscaWeb"), msg=$("buscaMsg"), box=$("webResultados");
-  const abierto = box.style.display!=="none" && box.innerHTML.trim()!=="";
-  if(abierto){
-    box.style.display="none"; msg.textContent="";
-    b.textContent="🔎 Buscar dónde se fabrica";
-    return;
-  }
-  if(cacheWeb){
-    box.style.display="block";
-    pintarResultadosWeb(cacheWeb);
-    msg.textContent="✅ He encontrado "+cacheWeb.resultados.length+" productos similares de distintas marcas.";
-    b.textContent="🙈 Ocultar productos similares";
-    return;
-  }
-  b.disabled=true; b.textContent="🔎 Buscando en la web..."; msg.textContent="";
-  let r=null;
-  try{ r=await buscarEnWeb(actual); }catch(e){ r={error:"fallo"}; }
-  b.disabled=false;
-  if(r && r.resultados){
-    cacheWeb=r;
-    box.style.display="block";
-    pintarResultadosWeb(r);
-    msg.textContent="✅ He encontrado "+r.resultados.length+" productos similares de distintas marcas.";
-    hablar(r.voz||"He encontrado productos similares de distintas marcas.");
-    b.textContent="🙈 Ocultar productos similares";
-  }else{
-    b.textContent="🔎 Buscar dónde se fabrica";
-    const m={"sin-datos":"No hay marca ni nombre suficiente para realizar la búsqueda.",
-             "sin-parecidos":"No encontré productos similares en las bases abiertas.",
-             "fallo":"No pude completar la búsqueda. Comprueba tu conexión."};
-    msg.textContent="😕 "+(m[r&&r.error]||"No pude completar la búsqueda. Comprueba tu conexión.");
-  }
+  const b=$("buscaWeb"), box=$("webResultados");
+  const abierto=box.style.display!=="none" && box.innerHTML.trim()!=="";
+  if(abierto){ box.style.display="none"; $("buscaMsg").textContent=""; b.textContent="🔎 Buscar dónde se fabrica"; return; }
+  await buscarFabricacionRealLQDD();
 };
 </script>
 
@@ -1245,7 +1311,6 @@ document.getElementById("buscaWeb").onclick = async () => {
   }
 
   function renderEtiquetaL(r){
-    window.lqddRenderEtiqueta=renderEtiquetaL;
     const filas=[];
     const add=(label,val,icon)=>{if(val)filas.push("<div style='margin:5px 0'>"+icon+" <b>"+label+":</b> "+escL(val)+"</div>");};
     add("Fabricado en",r.fabricadoEn,"🏭");
@@ -1276,6 +1341,8 @@ document.getElementById("buscaWeb").onclick = async () => {
       bx.innerHTML=h;bx.style.display="block";ib.textContent="🙈 Ocultar ingredientes";
       if(typeof hablar==="function") hablar("Los ingredientes son: "+r.ingredientes+(r.alergenos?". Alérgenos: "+r.alergenos:""));
     };
+    // La lectura de etiqueta también alimenta la ficha del mismo producto.
+    try{ if(window.lqddGuardarEtiquetaHistorial && window.actual && window.actual.codigo) window.lqddGuardarEtiquetaHistorial(window.actual.codigo,r); }catch(e){}
   }
 
   function prepararImagenEtiquetaL(file, conContraste){
@@ -1312,28 +1379,12 @@ document.getElementById("buscaWeb").onclick = async () => {
     });
   }
 
-  // La lectura OCR NO tiene límite de tiempo: si el teléfono tarda, dejamos
-  // que termine en lugar de cortar la lectura a mitad.
-  let lqddWorker=null;
-  let lqddWorkerCargando=null;
-  async function obtenerWorkerL(){
-    if(lqddWorker) return lqddWorker;
-    if(lqddWorkerCargando) return lqddWorkerCargando;
-    lqddWorkerCargando=(async()=>{
-      const w=await Tesseract.createWorker("spa+eng",1,{logger:m=>{
-        if(m && typeof m.progress==="number"){
-          const p=Math.max(5,Math.min(96,Math.round(m.progress*100)));
-          const b=E("lqddBarraEtiqueta"), q=E("lqddPorcentajeEtiqueta");
-          if(b) b.style.width=p+"%";
-          if(q) q.textContent=p+"%";
-        }
-      }});
-      try{await w.setParameters({tessedit_pageseg_mode:"6",preserve_interword_spaces:"1",user_defined_dpi:"300"});}catch(_e){}
-      lqddWorker=w;
-      lqddWorkerCargando=null;
-      return w;
-    })();
-    try{return await lqddWorkerCargando;}catch(e){lqddWorkerCargando=null;throw e;}
+  function conLimite(promesa, ms, mensaje){
+    let temporizador;
+    const limite=new Promise((_,reject)=>{
+      temporizador=setTimeout(()=>reject(new Error(mensaje||"tiempo agotado")),ms);
+    });
+    return Promise.race([promesa,limite]).finally(()=>clearTimeout(temporizador));
   }
 
   function hayDatoEtiquetaL(r){
@@ -1343,44 +1394,57 @@ document.getElementById("buscaWeb").onclick = async () => {
   async function leerEtiquetaL(file){
     const estado=E("lqddEstadoEtiqueta"), barra=E("lqddBarraEtiqueta"), pct=E("lqddPorcentajeEtiqueta"), res=E("lqddResultadoEtiqueta");
     estado.style.display="block";res.style.display="none";barra.style.width="2%";pct.textContent="2%";
+    let worker=null;
     try{
       if(!file) return;
       if(!window.Tesseract) throw new Error("OCR no disponible");
       const imagen=await prepararImagenEtiquetaL(file);
       barra.style.width="5%";pct.textContent="5%";
-      const worker=await obtenerWorkerL();
 
-      // Espera completa: NO se cancela aunque tarde más de la cuenta.
-      let ret=await worker.recognize(imagen);
+      worker=await Tesseract.createWorker("spa+eng",1,{logger:m=>{
+        if(m && typeof m.progress==="number"){
+          const p=Math.max(5,Math.min(96,Math.round(m.progress*100)));
+          barra.style.width=p+"%";pct.textContent=p+"%";
+        }
+      }});
+      try{await worker.setParameters({tessedit_pageseg_mode:"6",preserve_interword_spaces:"1",user_defined_dpi:"300"});}catch(_e){}
+
+      let ret=await conLimite(worker.recognize(imagen), 20000, "OCR: primera pasada demasiado lenta");
       let texto=String(ret&&ret.data&&ret.data.text||"");
       let datos=extraerEtiquetaL(texto);
 
+      // Segunda pasada, más suave (sin realzar tanto el contraste) pero igual de
+      // ligera que la primera, si esta no encontró datos claros. Nunca se usa la
+      // foto original sin comprimir: eso era lo que podía dejar la app colgada.
       if(!hayDatoEtiquetaL(datos)){
         barra.style.width="55%";pct.textContent="55%";
         const imagen2=await prepararImagenEtiquetaL(file,false);
-        ret=await worker.recognize(imagen2);
+        ret=await conLimite(worker.recognize(imagen2), 20000, "OCR: segunda pasada demasiado lenta");
         texto=String(ret&&ret.data&&ret.data.text||"");
         datos=extraerEtiquetaL(texto);
       }
 
-      if(!datos.pais && (datos.ciudad||datos.codigoPostal||datos.direccion)){
+      // Si con los datos locales no queda claro el país, pero sí hay una pista
+      // (ciudad, código postal o dirección), se consulta el callejero mundial
+      // real (OpenStreetMap) para intentar confirmarlo. Es opcional: si no hay
+      // conexión o tarda demasiado, se sigue sin bloquear la app.
+      if(!datos.pais && (datos.ciudad || datos.codigoPostal || datos.direccion)){
         barra.style.width="85%";pct.textContent="🌍";
-        try{
-          const consulta=[datos.codigoPostal,datos.ciudad||datos.direccion].filter(Boolean).join(" ");
-          const geo=await consultarMapaMundialL(consulta);
-          if(geo&&geo.pais){
-            datos.pais=geo.pais;
-            datos.mapaMundial=geo.pais+(geo.ciudad?" ("+geo.ciudad+")":"");
-            if(!datos.ciudad)datos.ciudad=geo.ciudad;
-            if(!datos.provincia)datos.provincia=geo.provincia;
-          }
-        }catch(_e){}
+        const consulta=[datos.codigoPostal,datos.ciudad||datos.direccion].filter(Boolean).join(" ");
+        const geo=await consultarMapaMundialL(consulta);
+        if(geo && geo.pais){
+          datos.pais=geo.pais;
+          datos.mapaMundial=geo.pais+(geo.ciudad?" ("+geo.ciudad+")":"");
+          if(!datos.ciudad) datos.ciudad=geo.ciudad;
+          if(!datos.provincia) datos.provincia=geo.provincia;
+        }
       }
 
+      // Si OCR sí leyó texto pero no encontró una etiqueta estándar, mostramos el texto útil.
       if(!hayDatoEtiquetaL(datos)){
         const limpio=limpiarOCR(texto);
         E("lqddTextoEtiqueta").innerHTML=limpio
-          ? "<b>📝 Texto detectado:</b><div style='white-space:pre-wrap;margin-top:6px'>"+escL(limpio.slice(0,6000))+"</div>"
+          ? "<b>📝 Texto detectado:</b><div style='white-space:pre-wrap;margin-top:6px'>"+escL(limpio.slice(0,3500))+"</div>"
           : "<b>⚠️ La foto no contiene texto legible.</b><br><small>Haz la foto más cerca, recta y con buena luz.</small>";
         E("lqddIngredientesEtiqueta").style.display="none";
         E("lqddIngredientesBox").style.display="none";
@@ -1388,24 +1452,23 @@ document.getElementById("buscaWeb").onclick = async () => {
         renderEtiquetaL(datos);
       }
 
-      // En cuanto termina la lectura, se añade a la ficha del historial del producto.
-      guardarEtiquetaHistorial(datos,texto);
-
       barra.style.width="100%";pct.textContent="100%";
       res.style.display="block";
       setTimeout(()=>{estado.style.display="none";},500);
     }catch(e){
       console.error("LQDD OCR:",e);
       barra.style.width="100%";pct.textContent="Error";
-      E("lqddTextoEtiqueta").innerHTML="<b>⚠️ No se pudo completar la lectura.</b><br><small>"+escL(e&&e.message?e.message:"Error de OCR")+"</small>";
+      const lento=e && /demasiado lenta/i.test(e.message||"");
+      E("lqddTextoEtiqueta").innerHTML=lento
+        ? "<b>⚠️ La lectura ha tardado demasiado y se ha detenido.</b><br><small>Prueba con una foto más pequeña, más cerca de la etiqueta y con buena luz.</small>"
+        : "<b>⚠️ No se pudo leer la etiqueta.</b><br><small>Comprueba la conexión a Internet y haz una foto nítida, de cerca y con buena iluminación.</small>";
       res.style.display="block";
       setTimeout(()=>{estado.style.display="none";},700);
+    }finally{
+      if(worker){try{await worker.terminate();}catch(_e){}}
     }
   }
 
-  window.addEventListener("beforeunload",()=>{
-    if(lqddWorker){try{lqddWorker.terminate();}catch(_e){}}
-  });
   E("lqddBtnEtiqueta").onclick=()=>E("lqddFotoEtiqueta").click();
   E("lqddFotoEtiqueta").onchange=ev=>{
     const f=ev.target.files&&ev.target.files[0];
