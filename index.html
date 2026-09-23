@@ -993,7 +993,7 @@ document.getElementById("buscaWeb").onclick = async () => {
     const r={fabricadoEn:"",fabricante:"",envasadoEn:"",envasadoPor:"",
       importadoPor:"",procesado:"",distribuidoPor:"",etiquetadoPor:"",
       acondicionadoPor:"",origen:"",direccion:"",ciudad:"",provincia:"",
-      pais:"",codigoPostal:"",ingredientes:"",alergenos:"",raw};
+      pais:"",ingredientes:"",alergenos:"",raw};
 
     r.fabricadoEn=lineaDespues(raw,/(?:(?:fabricad[oa]|hech[oa]|cread[oa]|elaborad[oa])\s+en|manufactured\s+in|made\s+in|produced\s+in|producid[oa]\s+en)\s*(.*)$/i);
     if(!r.fabricadoEn){
@@ -1032,80 +1032,21 @@ document.getElementById("buscaWeb").onclick = async () => {
       if(lp) r.pais=detectarPaisL(lp)||"";
     }
 
-    // Código postal: lo guardamos siempre que sea un CP claro.
-    // El código postal permite identificar el país en formatos conocidos y,
-    // mediante geocodificación, obtener la localidad/provincia cuando existe.
-    const cpSolo=/\b(\d{5})\b/.exec(raw);
-    if(cpSolo){
-      r.codigoPostal=cpSolo[1];
-      // En España los 2 primeros dígitos del CP identifican la provincia.
-      const pref=r.codigoPostal.slice(0,2);
-      const provinciasES={
-        "01":"Álava","02":"Albacete","03":"Alicante","04":"Almería","05":"Ávila","06":"Badajoz","07":"Baleares","08":"Barcelona","09":"Burgos","10":"Cáceres","11":"Cádiz","12":"Castellón","13":"Ciudad Real","14":"Córdoba","15":"A Coruña","16":"Cuenca","17":"Girona","18":"Granada","19":"Guadalajara","20":"Gipuzkoa","21":"Huelva","22":"Huesca","23":"Jaén","24":"León","25":"Lleida","26":"La Rioja","27":"Lugo","28":"Madrid","29":"Málaga","30":"Murcia","31":"Navarra","32":"Ourense","33":"Asturias","34":"Palencia","35":"Las Palmas","36":"Pontevedra","37":"Salamanca","38":"Santa Cruz de Tenerife","39":"Cantabria","40":"Segovia","41":"Sevilla","42":"Soria","43":"Tarragona","44":"Teruel","45":"Toledo","46":"Valencia","47":"Valladolid","48":"Bizkaia","49":"Zamora","50":"Zaragoza","51":"Ceuta","52":"Melilla"
-      };
-      if(provinciasES[pref]){
-        r.provincia=r.provincia||provinciasES[pref];
-        r.pais=r.pais||"España";
-      }
-    }
-
-    // Código postal + ciudad: solo aceptamos una ciudad cuando la estructura
-    // aporta una provincia entre paréntesis o una localidad claramente separada
-    // por coma. Así evitamos que frases como "Dermatológicamente testado"
-    // sean interpretadas por el OCR como si fueran una ciudad.
-    const cp=/\b(\d{5})\s+([^,\n(]{2,60}?)(?:\s*\(([^)\n]{2,60})\))\s*(?:,\s*([^\n]+))?/i.exec(raw);
+    // Código postal español + ciudad + provincia entre paréntesis.
+    const cp=/\b(\d{5})\s+([^,\n(]+?)(?:\s*\(([^)\n]+)\))?(?:,\s*([A-Za-zÁÉÍÓÚáéíóúÑñ ]+))?(?=\s*$|\n)/i.exec(raw);
     if(cp){
-      const posibleCiudad=(cp[2]||"").trim().replace(/\s+/g," ");
-      const posibleProvincia=(cp[3]||"").trim().replace(/\s+/g," ");
-      const basura=/^(?:dermatologicamente|dermatológicamente|ingredientes|ingredients|precauciones|precautions|uso|uso|contenido|cont\.?(?:\s*net)?|net|ml|e|testado|tested)$/i;
-      if(posibleProvincia && posibleCiudad.length>=2 && !basura.test(posibleCiudad)) {
-        r.ciudad=posibleCiudad;
-        r.provincia=posibleProvincia;
-        if(!r.pais) r.pais=detectarPaisL(cp[4]||posibleProvincia)||detectarPaisL(raw)||"";
-      }
+      r.ciudad=(cp[2]||"").trim();
+      r.provincia=(cp[3]||"").trim();
+      if(!r.pais) r.pais=detectarPaisL(raw);
     }
 
     // Si hay una declaración explícita, el país de fabricación/envasado se extrae de esa declaración.
-    // IMPORTANTE: no tomamos simplemente el primer país que aparezca en toda la etiqueta,
-    // porque puede ser un importador, distribuidor, dirección o una mención secundaria.
     if(r.fabricadoEn) r.fabricadoEn=detectarPaisL(r.fabricadoEn)||r.fabricadoEn;
     if(r.envasadoEn) r.envasadoEn=detectarPaisL(r.envasadoEn)||r.envasadoEn;
-
-    // "Origen declarado" solo procede de una frase explícita como "País de origen",
-    // "Country of origin" o "Product of". Nunca se rellena buscando cualquier país del texto.
-    // Así evitamos errores como mostrar China cuando la etiqueta dice "Made in Germany".
-
-    // País detectado: primero manda la declaración de fabricación; después, el origen
-    // explícitamente declarado. Solo usamos una línea "País/Country:" si existe.
-    if(r.fabricadoEn) r.pais=detectarPaisL(r.fabricadoEn)||r.pais||"";
-    else if(r.origen) r.pais=detectarPaisL(r.origen)||r.pais||"";
+    if(!r.origen) r.origen=detectarPaisL(raw)||"";
+    if(!r.pais) r.pais=detectarPaisL(raw)||"";
 
     return r;
-  }
-
-  async function completarPorCodigoPostalL(r){
-    if(!r.codigoPostal) return r;
-    try{
-      const paisHint=r.pais||"España";
-      const url="https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&addressdetails=1&accept-language=es&postalcode="+encodeURIComponent(r.codigoPostal)+"&country="+encodeURIComponent(paisHint);
-      const ac=new AbortController();
-      const timer=setTimeout(()=>ac.abort(),5000);
-      const resp=await fetch(url,{signal:ac.signal,headers:{"Accept":"application/json"}});
-      clearTimeout(timer);
-      if(!resp.ok) return r;
-      const arr=await resp.json();
-      if(!Array.isArray(arr)||!arr.length) return r;
-      const candidatos=arr.filter(x=>x&&x.address);
-      if(!candidatos.length) return r;
-      const a=candidatos[0].address;
-      const pais=a.country||r.pais;
-      const provincia=a.state||a.province||a.region||r.provincia;
-      const ciudad=a.city||a.town||a.village||a.municipality||a.city_district||"";
-      if(pais) r.pais=pais;
-      if(provincia) r.provincia=provincia;
-      if(ciudad && !r.ciudad) r.ciudad=ciudad;
-      return r;
-    }catch(_e){ return r; }
   }
 
   function renderEtiquetaL(r){
@@ -1122,7 +1063,6 @@ document.getElementById("buscaWeb").onclick = async () => {
     add("Acondicionado por",r.acondicionadoPor,"🔧");
     add("Origen declarado",r.origen,"🌍");
     add("Dirección",r.direccion,"📍");
-    add("Código postal",r.codigoPostal,"📮");
     add("Ciudad",r.ciudad,"🏙️");
     add("Provincia",r.provincia,"🗺️");
     add("País detectado",r.pais,"🌐");
@@ -1205,9 +1145,6 @@ document.getElementById("buscaWeb").onclick = async () => {
         texto=String(ret&&ret.data&&ret.data.text||"");
         datos=extraerEtiquetaL(texto);
       }
-
-      // Si hay código postal, intentamos completar automáticamente ciudad, provincia y país.
-      datos=await completarPorCodigoPostalL(datos);
 
       // Si OCR sí leyó texto pero no encontró una etiqueta estándar, mostramos el texto útil.
       if(!hayDatoEtiquetaL(datos)){
