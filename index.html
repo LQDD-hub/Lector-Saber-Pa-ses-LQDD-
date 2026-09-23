@@ -23,7 +23,7 @@
   #resultado{margin-top:16px;padding:16px;background:#fff;border-radius:12px;text-align:center;display:none;border:3px solid transparent}
   #resultado.ok{background:#c9f5cf;border-color:#1e9e3a;transition:all .45s ease}
   #resultado.mal{background:#ffd3d3;border-color:#d32f2f}
-  #resultado.compacto{padding:7px 10px;margin-top:8px;font-size:.82rem;max-height:78px;overflow:hidden;cursor:pointer;border-width:2px}
+  #resultado.compacto{padding:7px 10px;margin-top:8px;font-size:.82rem;max-height:78px;overflow:hidden;cursor:pointer}
   #resultado.compacto #frase{font-size:1rem!important;margin:2px 0!important}
   #resultado.compacto #pais{font-size:1rem;margin:2px 0}
   #resultado.compacto #fabrica,#resultado.compacto #fabricadoEn,#resultado.compacto #envasadoEn,
@@ -155,92 +155,92 @@ function bandera(nombre){
   return c ? String.fromCodePoint(...[...c].map(x => 127397 + x.charCodeAt(0))) : "🌍";
 }
 
-// Historial: guarda la ficha completa en el propio móvil y permite reabrirla.
-function cargarHist(){ 
+// Historial (se guarda en el propio móvil)
+let reabriendoHistorial=false;
+
+function cargarHist(){
   try{ return JSON.parse(localStorage.getItem("hist")||"[]"); }
   catch(e){ return []; }
 }
 
-function resumenVozInfo(x){
-  const i=x.info||{};
-  const partes=[];
-  if(i.nombre) partes.push("Producto: "+i.nombre);
-  if(i.marca) partes.push("Marca: "+i.marca);
-  if(i.denominacion) partes.push("Denominación: "+i.denominacion);
-  if(i.cantidad) partes.push("Cantidad: "+i.cantidad);
-  if(i.categoria) partes.push("Categoría: "+i.categoria);
-  if(i.ori) partes.push("Origen declarado: "+i.ori);
-  if(i.prod && i.prod.pais) partes.push("Fabricado en "+i.prod.pais);
-  if(i.envasadorPorEtiqueta && i.envasadorPorEtiqueta.empresa)
-    partes.push("Envasado por "+i.envasadorPorEtiqueta.empresa);
-  if(i.envasadoEtiqueta && i.envasadoEtiqueta.pais)
-    partes.push("Envasado en "+i.envasadoEtiqueta.pais);
-  if(i.direccionEtiqueta) partes.push("Dirección: "+i.direccionEtiqueta);
-  if(i.ciudadEtiqueta) partes.push("Ciudad: "+i.ciudadEtiqueta);
-  if(i.provinciaEtiqueta) partes.push("Provincia: "+i.provinciaEtiqueta);
-  if(i.paisEtiqueta) partes.push("País: "+i.paisEtiqueta);
-  if(i.etiquetadoEtiqueta && i.etiquetadoEtiqueta.fragmento)
-    partes.push("Etiquetado: "+i.etiquetadoEtiqueta.fragmento);
-  if(i.ingredients) partes.push("Los ingredientes están disponibles al desplegar el botón de ingredientes.");
-  return partes.join(". ")+".";
-}
-
-function guardar(codigo, pais, fab){
+function guardar(codigo,pais,fab){
   const h=cargarHist().filter(x=>x.codigo!==codigo);
-  let infoGuardada=null;
+  let copia=null;
   try{
     if(typeof actual!=="undefined" && actual && actual.info){
-      infoGuardada=JSON.parse(JSON.stringify(actual.info));
+      copia=JSON.parse(JSON.stringify(actual));
     }
-  }catch(e){ infoGuardada=null; }
+  }catch(e){ copia=null; }
 
   h.unshift({
-    codigo,
-    pais,
-    fab,
+    codigo:codigo,
+    pais:pais,
+    fab:fab,
     fecha:new Date().toLocaleString("es-ES"),
-    info:infoGuardada,
-    prefijo:(typeof actual!=="undefined" && actual)?actual.prefijo:pais,
-    gs1Raw:(typeof actual!=="undefined" && actual)?actual.gs1Raw:""
+    datos:copia
   });
 
   try{ localStorage.setItem("hist",JSON.stringify(h.slice(0,50))); }catch(e){}
   pintarHist();
 }
 
-function reabrirHistorial(indice){
-  const h=cargarHist();
-  const x=h[indice];
+function textoCompletoHistorial(x){
+  const a=x&&x.datos;
+  const i=a&&a.info?a.info:{};
+  const p=[];
+  if(i.nombre) p.push("Producto: "+i.nombre);
+  if(i.marca) p.push("Marca: "+i.marca);
+  if(i.denominacion) p.push("Denominación: "+i.denominacion);
+  if(i.cantidad) p.push("Cantidad: "+i.cantidad);
+  if(i.categoria) p.push("Categoría: "+i.categoria);
+  if(i.ori) p.push("Origen declarado: "+i.ori);
+  if(i.prod&&i.prod.pais) p.push("Fabricado en "+i.prod.pais);
+  if(i.envasadorPorEtiqueta&&i.envasadorPorEtiqueta.empresa) p.push("Envasado por "+i.envasadorPorEtiqueta.empresa);
+  if(i.envasadoEtiqueta&&i.envasadoEtiqueta.pais) p.push("Envasado en "+i.envasadoEtiqueta.pais);
+  if(i.direccionEtiqueta) p.push("Dirección: "+i.direccionEtiqueta);
+  if(i.ciudadEtiqueta) p.push("Ciudad: "+i.ciudadEtiqueta);
+  if(i.provinciaEtiqueta) p.push("Provincia: "+i.provinciaEtiqueta);
+  if(i.paisEtiqueta) p.push("País: "+i.paisEtiqueta);
+  if(i.etiquetadoEtiqueta&&i.etiquetadoEtiqueta.fragmento) p.push("Etiquetado: "+i.etiquetadoEtiqueta.fragmento);
+  if(i.ingredients) p.push("Los ingredientes están disponibles al desplegar el botón de ingredientes");
+  return p.length?p.join(". ")+".":"No hay más información disponible.";
+}
+
+function abrirHistorial(indice){
+  const h=cargarHist(), x=h[indice];
   if(!x) return;
 
-  const cuadro=$("resultado");
-  if(!cuadro) return;
+  // Versiones antiguas del historial siguen siendo compatibles.
+  if(!x.datos){
+    if(x.codigo && typeof mostrar==="function") mostrar(x.codigo);
+    return;
+  }
 
-  if(x.info){
-    actual={
-      codigo:x.codigo,
-      prefijo:x.prefijo||x.pais||"Desconocido",
-      info:x.info,
-      gs1Raw:x.gs1Raw||""
-    };
+  try{
+    reabriendoHistorial=true;
+    actual=x.datos;
+    const cuadro=$("resultado");
+    if(!cuadro) return;
 
     cuadro.style.display="block";
     cuadro.classList.remove("compacto");
+    $("codigo").textContent="Código: "+actual.codigo;
 
-    $("codigo").textContent="Código: "+x.codigo;
     if($("resultadoEtiquetaOCR")) $("resultadoEtiquetaOCR").style.display="none";
     if($("ocrProgreso")) $("ocrProgreso").style.display="none";
 
-    pintar(false,true);
+    // Pintamos la misma ficha guardada sin cambiarla.
+    pintar(true);
 
-    // La ficha se reabre completa y la voz vuelve a decir toda la información.
-    const pais=actual.prefijo==="España / Andorra"?"España":actual.prefijo;
+    const pais=(actual.prefijo==="España / Andorra"?"España":actual.prefijo);
     const saludo=pais==="España"?"¡Viva España! ":"";
-    hablar(saludo+resumenVozInfo(x));
+    hablar(saludo+textoCompletoHistorial(x));
 
     window.scrollTo({top:Math.max(0,cuadro.offsetTop-10),behavior:"smooth"});
-  }else{
-    mostrar(x.codigo);
+  }catch(e){
+    console.error("Error al abrir historial",e);
+  }finally{
+    reabriendoHistorial=false;
   }
 }
 
@@ -252,21 +252,22 @@ function pintarHist(){
   cont.innerHTML=h.length
     ? h.map((x,idx)=>{
         const pais=x.pais||"Desconocido";
-        const nombre=x.info&&x.info.nombre ? x.info.nombre : "";
-        const marca=x.info&&x.info.marca ? x.info.marca : "";
-        const fab=x.info&&x.info.prod&&x.info.prod.pais ? x.info.prod.pais : "";
-        return '<button type="button" class="item" data-hist="'+idx+'" style="width:100%;text-align:left;background:#c9f5cf;border:2px solid #1e9e3a;color:#3a3a00;cursor:pointer">'
+        const i=x.datos&&x.datos.info?x.datos.info:{};
+        const nombre=i.nombre||"";
+        const marca=i.marca||"";
+        const fab=i.prod&&i.prod.pais?i.prod.pais:"";
+        return '<button type="button" class="item" data-historial="'+idx+'" style="width:100%;text-align:left;background:#c9f5cf;border:2px solid #1e9e3a;color:#3a3a00;cursor:pointer">'
           +bandera(pais)+' <b>'+esc(pais)+'</b>'
           +(marca?' · 🏷️ <b>'+esc(marca)+'</b>':'')
           +(nombre?'<small>📦 '+esc(nombre)+'</small>':'')
           +(fab?'<small>🏭 Fabricado en '+esc(fab)+'</small>':'')
-          +'<small>🔁 Toca para volver a abrir y escuchar todo · '+esc(x.codigo)+' · '+esc(x.fecha||"")+'</small>'
+          +'<small>🔁 Toca para volver a abrir y escuchar todo · '+esc(x.codigo||"")+' · '+esc(x.fecha||"")+'</small>'
           +'</button>';
       }).join("")
     : '<small>Aún no has escaneado nada.</small>';
 
-  cont.querySelectorAll("[data-hist]").forEach(b=>{
-    b.addEventListener("click",()=>reabrirHistorial(Number(b.getAttribute("data-hist"))));
+  cont.querySelectorAll("[data-historial]").forEach(b=>{
+    b.onclick=()=>abrirHistorial(Number(b.getAttribute("data-historial")));
   });
 }
 
@@ -1363,7 +1364,7 @@ function pintarGS1(raw){
   box.innerHTML=h ? '<div style="padding:10px;background:#fff7d6;border-radius:10px;border:1px solid #e0c45c">'+h+'</div>' : '';
   return d;
 }
-function pintar(silencio, desdeHistorial=false){
+function pintar(silencio){
   const {codigo,prefijo,info}=actual, cuadro=$("resultado");
   const gs1=pintarGS1(actual.gs1Raw||"");
   const paisPrefijo=prefijo==="España / Andorra"?"España":prefijo;
@@ -1435,17 +1436,14 @@ function pintar(silencio, desdeHistorial=false){
   if(!silencio){ if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia(); }
   const detalle=tieneFabricacion?(info.prod.nivel==="confirmado"?"El producto tiene un dato de fabricación declarado en "+paisFab:(info.prod.voz||"Hay una evidencia asociada a un establecimiento en "+paisFab+", pero no demuestra por sí sola la fabricación")):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no hay una evidencia pública suficiente para confirmar dónde se fabricó.";
   hablar((frase?frase+" ":"")+detalle);
-  guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1");
-
-  // Cuando acaba de verse una ficha verde (España), se encoge y queda disponible
-  // en el historial como una ficha ya vista. Al tocarla vuelve a abrirse completa.
-  if(!silencio && !desdeHistorial && paisPrefijo==="España"){
+  if(!reabriendoHistorial){
+    guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1");
+  }
+  if(!silencio && !reabriendoHistorial && paisPrefijo==="España"){
     const ref=cuadro;
     clearTimeout(window._lqddCompactTimer);
     window._lqddCompactTimer=setTimeout(()=>{
-      if(ref && ref.style.display!=="none"){
-        ref.classList.add("compacto");
-      }
+      if(ref && ref.style.display!=="none") ref.classList.add("compacto");
     },3600);
   }
 }
@@ -1489,14 +1487,14 @@ async function iniciar(){
 }
 
 
-const resultadoCard = document.getElementById("resultado");
-if(resultadoCard){
-  resultadoCard.addEventListener("click",()=>{
-    if(resultadoCard.classList.contains("compacto")){
-      resultadoCard.classList.remove("compacto");
-      if(typeof actual!=="undefined" && actual){
-        hablar((actual.prefijo==="España"||actual.prefijo==="España / Andorra"?"¡Viva España! ":"")+resumenVozInfo(actual));
-      }
+const tarjetaResultado = document.getElementById("resultado");
+if(tarjetaResultado){
+  tarjetaResultado.addEventListener("click",()=>{
+    if(!tarjetaResultado.classList.contains("compacto")) return;
+    tarjetaResultado.classList.remove("compacto");
+    if(typeof actual!=="undefined" && actual){
+      const pais=(actual.prefijo==="España / Andorra"?"España":actual.prefijo);
+      hablar((pais==="España"?"¡Viva España! ":"")+textoCompletoHistorial({datos:actual}));
     }
   });
 }
