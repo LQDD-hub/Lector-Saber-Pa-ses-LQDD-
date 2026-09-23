@@ -153,15 +153,49 @@ function cargarHist(){ try{ return JSON.parse(localStorage.getItem("hist")||"[]"
 function guardar(codigo, pais, fab, extra){
   const h = cargarHist().filter(x => x.codigo !== codigo);
   h.unshift({codigo, pais, fab, fecha:new Date().toLocaleString("es-ES"),
-    nombre:(extra&&extra.nombre)||"", frase:(extra&&extra.frase)||"", snapshot:(extra&&extra.snapshot)||null});
+    nombre:(extra&&extra.nombre)||"", frase:(extra&&extra.frase)||"",
+    snapshot:(extra&&extra.snapshot)||null,
+    etiqueta:(extra&&extra.etiqueta)||null});
   try{ localStorage.setItem("hist", JSON.stringify(h.slice(0,50))); }catch(e){}
   pintarHist();
+}
+
+function guardarEtiquetaHistorial(datos, textoOCR){
+  try{
+    const h=cargarHist();
+    const codigo=(actual&&actual.codigo)?String(actual.codigo):"";
+    if(!codigo) return;
+    const idx=h.findIndex(x=>String(x.codigo)===codigo);
+    if(idx<0) return;
+    h[idx].etiqueta={datos:datos||{}, textoOCR:String(textoOCR||"").slice(0,6000),
+      fecha:new Date().toLocaleString("es-ES")};
+    localStorage.setItem("hist",JSON.stringify(h.slice(0,50)));
+    pintarHist();
+  }catch(e){}
+}
+
+function mostrarEtiquetaHistorial(etiqueta){
+  if(!etiqueta) return;
+  const r=E?E("lqddResultadoEtiqueta"):document.getElementById("lqddResultadoEtiqueta");
+  const t=E?E("lqddTextoEtiqueta"):document.getElementById("lqddTextoEtiqueta");
+  if(!r||!t) return;
+  const datos=etiqueta.datos||{};
+  if(Object.keys(datos).length){
+    try{ renderEtiquetaL(datos); }
+    catch(e){ t.innerHTML=escHist(etiqueta.textoOCR||""); }
+  }else if(etiqueta.textoOCR){
+    t.innerHTML="<b>📝 Texto detectado:</b><div style='white-space:pre-wrap;margin-top:6px'>"+escHist(etiqueta.textoOCR)+"</div>";
+  }
+  r.style.display="block";
 }
 function abrirHistorial(idx){
   const h = cargarHist(), entry = h[idx];
   if(!entry || !entry.snapshot) return;
   actual = {codigo:entry.codigo, prefijo:entry.snapshot.prefijo, info:entry.snapshot.info, gs1Raw:entry.snapshot.gs1Raw};
   pintar(true, true);
+  if(entry.etiqueta){
+    setTimeout(()=>mostrarEtiquetaHistorial(entry.etiqueta),0);
+  }
   const r = document.getElementById("resultado");
   if(r) r.scrollIntoView({behavior:"smooth", block:"start"});
 }
@@ -171,11 +205,25 @@ function pintarHist(){
     ? h.map((x,i) => '<div class="item" data-idx="'+i+'" style="cursor:pointer">'+bandera(x.pais)+' <b>'+escHist(x.nombre||x.pais)+'</b>'
         +(x.frase?' · <span style="color:#1e8e3e;font-weight:bold">'+escHist(x.frase)+'</span>':'')
         +(x.fab?(x.fab.indexOf('según')===0?' · 🏷️ ':' · 🏭 ')+escHist(x.fab):'')
+        +(x.etiqueta?' · 🏷️ Etiqueta leída':'')
         +'<small>'+escHist(x.codigo)+' · '+escHist(x.fecha)+'</small></div>').join("")
     : '<small>Aún no has escaneado nada.</small>';
   document.querySelectorAll("#hist .item").forEach(el=>{
     el.onclick = () => abrirHistorial(+el.getAttribute("data-idx"));
   });
+}
+function mostrarEtiquetaHistorial(etiqueta){
+  if(!etiqueta) return;
+  const r=document.getElementById("lqddResultadoEtiqueta");
+  const t=document.getElementById("lqddTextoEtiqueta");
+  if(!r||!t) return;
+  const datos=etiqueta.datos||{};
+  if(Object.keys(datos).length && typeof window.lqddRenderEtiqueta==="function"){
+    window.lqddRenderEtiqueta(datos);
+  }else if(etiqueta.textoOCR){
+    t.innerHTML="<b>📝 Texto detectado:</b><div style='white-space:pre-wrap;margin-top:6px'>"+escHist(etiqueta.textoOCR)+"</div>";
+  }
+  r.style.display="block";
 }
 document.getElementById("borrar").onclick = () => { try{ localStorage.removeItem("hist"); }catch(e){} pintarHist(); };
 pintarHist();
@@ -1197,6 +1245,7 @@ document.getElementById("buscaWeb").onclick = async () => {
   }
 
   function renderEtiquetaL(r){
+    window.lqddRenderEtiqueta=renderEtiquetaL;
     const filas=[];
     const add=(label,val,icon)=>{if(val)filas.push("<div style='margin:5px 0'>"+icon+" <b>"+label+":</b> "+escL(val)+"</div>");};
     add("Fabricado en",r.fabricadoEn,"🏭");
@@ -1263,12 +1312,28 @@ document.getElementById("buscaWeb").onclick = async () => {
     });
   }
 
-  function conLimite(promesa, ms, mensaje){
-    let temporizador;
-    const limite=new Promise((_,reject)=>{
-      temporizador=setTimeout(()=>reject(new Error(mensaje||"tiempo agotado")),ms);
-    });
-    return Promise.race([promesa,limite]).finally(()=>clearTimeout(temporizador));
+  // La lectura OCR NO tiene límite de tiempo: si el teléfono tarda, dejamos
+  // que termine en lugar de cortar la lectura a mitad.
+  let lqddWorker=null;
+  let lqddWorkerCargando=null;
+  async function obtenerWorkerL(){
+    if(lqddWorker) return lqddWorker;
+    if(lqddWorkerCargando) return lqddWorkerCargando;
+    lqddWorkerCargando=(async()=>{
+      const w=await Tesseract.createWorker("spa+eng",1,{logger:m=>{
+        if(m && typeof m.progress==="number"){
+          const p=Math.max(5,Math.min(96,Math.round(m.progress*100)));
+          const b=E("lqddBarraEtiqueta"), q=E("lqddPorcentajeEtiqueta");
+          if(b) b.style.width=p+"%";
+          if(q) q.textContent=p+"%";
+        }
+      }});
+      try{await w.setParameters({tessedit_pageseg_mode:"6",preserve_interword_spaces:"1",user_defined_dpi:"300"});}catch(_e){}
+      lqddWorker=w;
+      lqddWorkerCargando=null;
+      return w;
+    })();
+    try{return await lqddWorkerCargando;}catch(e){lqddWorkerCargando=null;throw e;}
   }
 
   function hayDatoEtiquetaL(r){
@@ -1278,57 +1343,44 @@ document.getElementById("buscaWeb").onclick = async () => {
   async function leerEtiquetaL(file){
     const estado=E("lqddEstadoEtiqueta"), barra=E("lqddBarraEtiqueta"), pct=E("lqddPorcentajeEtiqueta"), res=E("lqddResultadoEtiqueta");
     estado.style.display="block";res.style.display="none";barra.style.width="2%";pct.textContent="2%";
-    let worker=null;
     try{
       if(!file) return;
       if(!window.Tesseract) throw new Error("OCR no disponible");
       const imagen=await prepararImagenEtiquetaL(file);
       barra.style.width="5%";pct.textContent="5%";
+      const worker=await obtenerWorkerL();
 
-      worker=await Tesseract.createWorker("spa+eng",1,{logger:m=>{
-        if(m && typeof m.progress==="number"){
-          const p=Math.max(5,Math.min(96,Math.round(m.progress*100)));
-          barra.style.width=p+"%";pct.textContent=p+"%";
-        }
-      }});
-      try{await worker.setParameters({tessedit_pageseg_mode:"6",preserve_interword_spaces:"1",user_defined_dpi:"300"});}catch(_e){}
-
-      let ret=await conLimite(worker.recognize(imagen), 20000, "OCR: primera pasada demasiado lenta");
+      // Espera completa: NO se cancela aunque tarde más de la cuenta.
+      let ret=await worker.recognize(imagen);
       let texto=String(ret&&ret.data&&ret.data.text||"");
       let datos=extraerEtiquetaL(texto);
 
-      // Segunda pasada, más suave (sin realzar tanto el contraste) pero igual de
-      // ligera que la primera, si esta no encontró datos claros. Nunca se usa la
-      // foto original sin comprimir: eso era lo que podía dejar la app colgada.
       if(!hayDatoEtiquetaL(datos)){
         barra.style.width="55%";pct.textContent="55%";
         const imagen2=await prepararImagenEtiquetaL(file,false);
-        ret=await conLimite(worker.recognize(imagen2), 20000, "OCR: segunda pasada demasiado lenta");
+        ret=await worker.recognize(imagen2);
         texto=String(ret&&ret.data&&ret.data.text||"");
         datos=extraerEtiquetaL(texto);
       }
 
-      // Si con los datos locales no queda claro el país, pero sí hay una pista
-      // (ciudad, código postal o dirección), se consulta el callejero mundial
-      // real (OpenStreetMap) para intentar confirmarlo. Es opcional: si no hay
-      // conexión o tarda demasiado, se sigue sin bloquear la app.
-      if(!datos.pais && (datos.ciudad || datos.codigoPostal || datos.direccion)){
+      if(!datos.pais && (datos.ciudad||datos.codigoPostal||datos.direccion)){
         barra.style.width="85%";pct.textContent="🌍";
-        const consulta=[datos.codigoPostal,datos.ciudad||datos.direccion].filter(Boolean).join(" ");
-        const geo=await consultarMapaMundialL(consulta);
-        if(geo && geo.pais){
-          datos.pais=geo.pais;
-          datos.mapaMundial=geo.pais+(geo.ciudad?" ("+geo.ciudad+")":"");
-          if(!datos.ciudad) datos.ciudad=geo.ciudad;
-          if(!datos.provincia) datos.provincia=geo.provincia;
-        }
+        try{
+          const consulta=[datos.codigoPostal,datos.ciudad||datos.direccion].filter(Boolean).join(" ");
+          const geo=await consultarMapaMundialL(consulta);
+          if(geo&&geo.pais){
+            datos.pais=geo.pais;
+            datos.mapaMundial=geo.pais+(geo.ciudad?" ("+geo.ciudad+")":"");
+            if(!datos.ciudad)datos.ciudad=geo.ciudad;
+            if(!datos.provincia)datos.provincia=geo.provincia;
+          }
+        }catch(_e){}
       }
 
-      // Si OCR sí leyó texto pero no encontró una etiqueta estándar, mostramos el texto útil.
       if(!hayDatoEtiquetaL(datos)){
         const limpio=limpiarOCR(texto);
         E("lqddTextoEtiqueta").innerHTML=limpio
-          ? "<b>📝 Texto detectado:</b><div style='white-space:pre-wrap;margin-top:6px'>"+escL(limpio.slice(0,3500))+"</div>"
+          ? "<b>📝 Texto detectado:</b><div style='white-space:pre-wrap;margin-top:6px'>"+escL(limpio.slice(0,6000))+"</div>"
           : "<b>⚠️ La foto no contiene texto legible.</b><br><small>Haz la foto más cerca, recta y con buena luz.</small>";
         E("lqddIngredientesEtiqueta").style.display="none";
         E("lqddIngredientesBox").style.display="none";
@@ -1336,23 +1388,24 @@ document.getElementById("buscaWeb").onclick = async () => {
         renderEtiquetaL(datos);
       }
 
+      // En cuanto termina la lectura, se añade a la ficha del historial del producto.
+      guardarEtiquetaHistorial(datos,texto);
+
       barra.style.width="100%";pct.textContent="100%";
       res.style.display="block";
       setTimeout(()=>{estado.style.display="none";},500);
     }catch(e){
       console.error("LQDD OCR:",e);
       barra.style.width="100%";pct.textContent="Error";
-      const lento=e && /demasiado lenta/i.test(e.message||"");
-      E("lqddTextoEtiqueta").innerHTML=lento
-        ? "<b>⚠️ La lectura ha tardado demasiado y se ha detenido.</b><br><small>Prueba con una foto más pequeña, más cerca de la etiqueta y con buena luz.</small>"
-        : "<b>⚠️ No se pudo leer la etiqueta.</b><br><small>Comprueba la conexión a Internet y haz una foto nítida, de cerca y con buena iluminación.</small>";
+      E("lqddTextoEtiqueta").innerHTML="<b>⚠️ No se pudo completar la lectura.</b><br><small>"+escL(e&&e.message?e.message:"Error de OCR")+"</small>";
       res.style.display="block";
       setTimeout(()=>{estado.style.display="none";},700);
-    }finally{
-      if(worker){try{await worker.terminate();}catch(_e){}}
     }
   }
 
+  window.addEventListener("beforeunload",()=>{
+    if(lqddWorker){try{lqddWorker.terminate();}catch(_e){}}
+  });
   E("lqddBtnEtiqueta").onclick=()=>E("lqddFotoEtiqueta").click();
   E("lqddFotoEtiqueta").onchange=ev=>{
     const f=ev.target.files&&ev.target.files[0];
