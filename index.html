@@ -410,9 +410,70 @@ async function ubicarLugar(texto,paisHint){
   finally{ clearTimeout(t); }
 }
 
+
+async function buscarIngredientesPorMarcaNombre(marca,nombre){
+  marca=String(marca||"").trim();
+  nombre=String(nombre||"").trim();
+  if(!marca && !nombre) return null;
+
+  const q=[marca,nombre].filter(Boolean).join(" ").trim();
+  if(!q) return null;
+
+  const campos="code,product_name,product_name_es,brands,ingredients_text,ingredients_text_es,allergens,allergens_tags";
+  const url="https://world.openfoodfacts.org/cgi/search.pl?action=process&json=1&page_size=20&fields="+encodeURIComponent(campos)+"&search_terms="+encodeURIComponent(q);
+
+  try{
+    const r=await fetch(url,{signal:AbortSignal.timeout(12000)});
+    if(!r.ok) return null;
+    const d=await r.json();
+    const productos=Array.isArray(d.products)?d.products:[];
+
+    const nm=norm(nombre);
+    const mk=norm(marca);
+    let mejor=null, mejorScore=0;
+
+    for(const p of productos){
+      const pn=norm(p.product_name_es||p.product_name||"");
+      const pb=norm(p.brands||"");
+      const ing=String(p.ingredients_text_es||p.ingredients_text||"").trim();
+      if(!ing) continue;
+
+      let score=0;
+      if(mk && pb.includes(mk)) score+=5;
+
+      const palabrasNombre=palabras(nombre);
+      const palabrasProducto=palabras(pn);
+      const comunes=palabrasNombre.filter(x=>palabrasProducto.includes(x)).length;
+      score+=comunes*2;
+
+      if(nm && (pn.includes(nm) || nm.includes(pn))) score+=6;
+
+      if(score>mejorScore){
+        mejorScore=score;
+        mejor=p;
+      }
+    }
+
+    // Exigimos una coincidencia razonable para no atribuir ingredientes
+    // de un producto parecido al producto escaneado.
+    if(!mejor || mejorScore<5) return null;
+
+    return {
+      ingredientes:String(mejor.ingredients_text_es||mejor.ingredients_text||"").trim(),
+      alergenos:String(mejor.allergens||"").trim(),
+      fuente:"Open Food Facts · coincidencia por marca y producto",
+      codigo:String(mejor.code||"")
+    };
+  }catch(e){
+    return null;
+  }
+}
+
 async function buscarProducto(codigo){
   const bases=["openfoodfacts","openbeautyfacts","openproductsfacts"];
-  const campos="product_name,abbreviated_product_name,generic_name,brands,quantity,product_quantity,product_quantity_unit,categories,categories_tags,manufacturing_places,manufacturing_places_tags,cities_tags,origins,origins_tags,origin,labels,labels_tags,emb_codes,emb_codes_tags,emb_codes_orig,packaging_text,customer_service,producer,stores,link,knowledge_panels,ingredients_text,ingredients_text_es,allergens,allergens_tags";
+  const campos="product_name,abbreviated_product_name,generic_name,brands,quantity,product_quantity,product_quantity_unit,categories,categories_tags,manufacturing_places,manufacturing_places_tags,cities_tags,origins,origins_tags,origin,labels,labels_tags,emb_codes,emb_codes_tags,emb_codes_orig,packaging_text,customer_service,producer,stores,link,knowledge_panels,  let ingredientsSource="Base de datos";
+  let ingredientsCode="";
+ingredients_text,ingredients_text_es,allergens,allergens_tags";
   const res=await Promise.all(bases.map(async b=>{
     const ac=new AbortController(), t=setTimeout(()=>ac.abort(),9000);
     try{
@@ -504,7 +565,7 @@ async function buscarProducto(codigo){
   else if(embInfo) envasado=embInfo;
   else if((p=deEmb(embTags))) envasado={pais:p,fuente:"Código de establecimiento/envasador",nivel:"asociado",detalle:String(embTags)};
 
-  return {nombre,marca,denominacion,cantidad,categoria,fab,ori,oriTags,emb,embTags,embOrig,packaging,customer,producer,ciudades,panels,prod,envasado,evidencias,fuentes:ps.length,ingredients,alergenos};
+  return {nombre,marca,denominacion,cantidad,categoria,fab,ori,oriTags,emb,embTags,embOrig,packaging,customer,producer,ciudades,panels,prod,envasado,evidencias,fuentes:ps.length,ingredients,alergenos,ingredientsSource,ingredientsCode};
 }
 
 // País guardado en el móvil para un código (por ejemplo, leído de la etiqueta)
@@ -685,11 +746,11 @@ function detectarDatosEtiqueta(texto){
 
   // ENVASADO: Envasado en / Packed in / Packaged in / Embalado en...
   const reEnv=[
-    /(?:envasado|envasada|embalado|embalada|acondicionado|acondicionada)\s*(?:en|:)\s*([A-Za-zÁÉÍÓÚÜÑáéíóúüñÀ-ÿ .'-]{2,40})/i,
-    /(?:packed|packaged)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .'-]{2,40})/i,
-    /(?:emballé|emballe|conditionné|conditionnee|conditionnée)\s*(?:en|:)\s*([A-Za-zÀ-ÿ .'-]{2,40})/i,
-    /(?:confezionato|confezionata|imballato|imballata)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .'-]{2,40})/i,
-    /(?:verpackt|abgepackt)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .'-]{2,40})/i
+    /(?:envasado|envasada|embasado|embasada|embalado|embalada|acondicionado|acondicionada)\s*(?:en|:)\s*([A-Za-zÁÉÍÓÚÜÑáéíóúüñÀ-ÿ .'-]{2,60})/i,
+    /(?:packed|packaged)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .'-]{2,60})/i,
+    /(?:emballé|emballe|conditionné|conditionnee|conditionnée)\s*(?:en|:)\s*([A-Za-zÀ-ÿ .'-]{2,60})/i,
+    /(?:confezionato|confezionata|imballato|imballata)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .'-]{2,60})/i,
+    /(?:verpackt|abgepackt)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .'-]{2,60})/i
   ];
   for(const re of reEnv){
     const m=limpio.match(re);
@@ -699,7 +760,20 @@ function detectarDatosEtiqueta(texto){
     }
   }
 
-  return {fabricacion,envasado,texto:raw};
+
+  // Dirección/establecimiento: no la confundimos con el país de fabricación.
+  // Se conserva como pista para ubicar el lugar de envasado/empresa.
+  let direccion = null;
+  const rd = limpio.match(/(?:calle|c\/|av\.?|avenida|paseo|plaza)\s+[^,;|]{2,80}(?:s\/n|sn|n[º°]?\s*\d+)?/i);
+  if(rd) direccion = rd[0].trim();
+
+  // "S/N" también aparece solo en direcciones de etiquetas.
+  if(!direccion){
+    const sn = limpio.match(/[^,;|]{2,80}\b(?:s\/n|sn)\b/i);
+    if(sn) direccion = sn[0].trim();
+  }
+
+  return {fabricacion,envasado,direccion,direccionTexto:direccion,texto:raw};
 }
 
 function aplicarDatosEtiqueta(info,datos){
@@ -718,6 +792,9 @@ function aplicarDatosEtiqueta(info,datos){
     etiquetaEnvasado=datos.envasado;
     const e=datos.envasado;
     info.envasadoEtiqueta={pais:e.pais,nivel:"confirmado",fuente:"Texto visible en la etiqueta (OCR)",detalle:e.detalle};
+  }
+  if(datos.direccion){
+    info.direccionEtiqueta = datos.direccion;
   }
 }
 
@@ -926,12 +1003,18 @@ function pintar(silencio){
   if(info.envasadoEtiqueta){
     html+="<br>🟢 📦 <b>Envasado en: "+esc(info.envasadoEtiqueta.pais)+"</b> <small>(Texto visible en la etiqueta)</small>";
     if(info.envasadoEtiqueta.detalle) html+="<br><small>📌 Evidencia de envasado: "+esc(info.envasadoEtiqueta.detalle)+"</small>";
+    if(info.direccionEtiqueta) html+="<br>📍 <b>Dirección/establecimiento de la etiqueta:</b> "+esc(info.direccionEtiqueta);
     $("envasadoEn").textContent="🟢 Envasado en "+info.envasadoEtiqueta.pais;
   }else if(info.envasado){
     html+="<br>📦 <b>País asociado al envasador:</b> "+esc(info.envasado.pais)+" <small>(dato asociado; no demuestra por sí solo la fabricación)</small>";
     $("envasadoEn").textContent="🟡 Establecimiento/envasador asociado: "+info.envasado.pais;
   }else{
     $("envasadoEn").textContent="⚪ Envasado: no disponible";
+  }
+  if(info.ingredients && info.ingredientsSource){
+    html+="<br>🧪 <b>Ingredientes:</b> "+esc(info.ingredients);
+    if(info.alergenos) html+="<br>⚠️ <b>Alérgenos:</b> "+esc(info.alergenos);
+    html+="<br><small>📚 Fuente de ingredientes: "+esc(info.ingredientsSource)+"</small>";
   }
   if(info.packaging) html+="<br>📦 <b>Envase:</b> "+esc(info.packaging);
   if(info.emb) html+="<br>🔎 <b>Código de trazabilidad:</b> "+esc(info.emb);
