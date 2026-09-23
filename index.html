@@ -471,9 +471,7 @@ async function buscarIngredientesPorMarcaNombre(marca,nombre){
 
 async function buscarProducto(codigo){
   const bases=["openfoodfacts","openbeautyfacts","openproductsfacts"];
-  const campos="product_name,abbreviated_product_name,generic_name,brands,quantity,product_quantity,product_quantity_unit,categories,categories_tags,manufacturing_places,manufacturing_places_tags,cities_tags,origins,origins_tags,origin,labels,labels_tags,emb_codes,emb_codes_tags,emb_codes_orig,packaging_text,customer_service,producer,stores,link,knowledge_panels,  let ingredientsSource="Base de datos";
-  let ingredientsCode="";
-ingredients_text,ingredients_text_es,allergens,allergens_tags";
+  const campos="product_name,abbreviated_product_name,generic_name,brands,quantity,product_quantity,product_quantity_unit,categories,categories_tags,manufacturing_places,manufacturing_places_tags,cities_tags,origins,origins_tags,origin,labels,labels_tags,emb_codes,emb_codes_tags,emb_codes_orig,packaging_text,customer_service,producer,stores,link,knowledge_panels,ingredients_text,ingredients_text_es,allergens,allergens_tags";
   const res=await Promise.all(bases.map(async b=>{
     const ac=new AbortController(), t=setTimeout(()=>ac.abort(),9000);
     try{
@@ -505,9 +503,11 @@ ingredients_text,ingredients_text_es,allergens,allergens_tags";
   const emb=campo("emb_codes"), embTags=campo("emb_codes_tags"), embOrig=campo("emb_codes_orig");
   const packaging=campo("packaging_text"), customer=campo("customer_service"), producer=campo("producer"), link=campo("link");
   const panels=campo("knowledge_panels");
-  const ingredients=campo("ingredients_text_es")||campo("ingredients_text");
+  let ingredients=campo("ingredients_text_es")||campo("ingredients_text");
+  let ingredientsSource=ingredients?"Ficha exacta del producto":"";
+  let ingredientsCode="";
   const alergenosRaw=campo("allergens");
-  const alergenos=alergenosRaw?String(alergenosRaw).split(",").map(a=>a.replace(/^[a-z]{2}:/i,"").trim()).filter(Boolean).join(", "):"";
+  let alergenos=alergenosRaw?String(alergenosRaw).split(",").map(a=>a.replace(/^[a-z]{2}:/i,"").trim()).filter(Boolean).join(", "):"";
 
   let evidencias=[];
   let p;
@@ -558,6 +558,18 @@ ingredients_text,ingredients_text_es,allergens,allergens_tags";
   const prioridad={confirmado:3,asociado:2};
   evidencias.sort((a,b)=>(prioridad[b.nivel]||0)-(prioridad[a.nivel]||0));
   const prod=evidencias.find(x=>x.pais)||null;
+
+  // Si la ficha exacta no trae ingredientes, intentamos una coincidencia
+  // conservadora por marca + nombre. Nunca inventamos ingredientes.
+  if(!ingredients){
+    const extra=await buscarIngredientesPorMarcaNombre(marca,nombre);
+    if(extra){
+      ingredients=extra.ingredientes;
+      alergenos=alergenos || extra.alergenos;
+      ingredientsSource=extra.fuente;
+      ingredientsCode=extra.codigo;
+    }
+  }
 
   let envasado=null;
   const ep=String(emb||embOrig||"");
