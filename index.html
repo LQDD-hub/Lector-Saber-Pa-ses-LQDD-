@@ -689,131 +689,47 @@ async function buscarFabricacionRealLQDD(){
   }finally{ b.disabled=false; }
 }
 
-// ---------- Búsqueda automática: otros productos de la misma marca y nombre ----------
-async function pedirJSON(url,ms){
-  const ac=new AbortController(), t=setTimeout(()=>ac.abort(),ms||10000);
-  try{ const r=await fetch(url,{signal:ac.signal}); if(!r.ok) return null; return await r.json(); }
-  catch(e){ return null; }
-  finally{ clearTimeout(t); }
-}
-const espera=ms=>new Promise(r=>setTimeout(r,ms));
-function palabras(t){ return norm(t).split(/[^a-z0-9]+/).filter(w=>w.length>=3); }
-
-async function buscarEnWeb(a){
-  const info=a.info||{};
-  const marca=String(info.marca||"").split(",")[0].trim();
-  const nombre=String(info.nombre||info.denominacion||"").trim();
-  const codigo=String(a.codigo||"").trim();
-  if(!marca && !nombre && !codigo) return {error:"sin-datos"};
-
-  // Buscamos productos SIMILARES en las tres bases abiertas, sin limitar la búsqueda
-  // a la marca del producto escaneado. Todo se muestra dentro de la aplicación.
-  const campos="code,product_name,brands,manufacturing_places,emb_codes,labels_tags,countries_tags,origins";
-  const consultas=[];
-  if(nombre) consultas.push(nombre);
-  if(marca && nombre) consultas.push(marca+" "+nombre);
-  if(marca && !nombre) consultas.push(marca);
-  // También probamos términos relevantes del nombre para no depender de una coincidencia exacta.
-  const pw=palabras(nombre).slice(0,4);
-  if(pw.length>=2) consultas.push(pw.slice(0,3).join(" "));
-
-  const urls=[];
-  for(const b of ["openfoodfacts","openbeautyfacts","openproductsfacts"]){
-    for(const q of consultas){
-      urls.push("https://world."+b+".org/cgi/search.pl?action=process&json=1&search_simple=1&page_size=60&fields="+encodeURIComponent(campos)+"&search_terms="+encodeURIComponent(q));
-    }
-  }
-
-  const respuestas=await Promise.all(urls.map(u=>pedirJSON(u,15000)));
-  const vistos=new Set();
-  const candidatos=[];
-  const palabrasNombre=palabras(nombre);
-  const palabrasMarca=palabras(marca);
-
-  function puntuar(p){
-    const pn=palabras(p.product_name||"");
-    const pb=palabras(p.brands||"");
-    const comunes=palabrasNombre.filter(x=>pn.includes(x)).length;
-    const marcaCoincide=marca && norm(p.brands||"").includes(norm(marca));
-    const marcaProducto=palabrasMarca.filter(x=>pb.includes(x)).length;
-    let score=comunes*4+marcaProducto*2;
-    if(marcaCoincide) score+=3;
-    if(p.manufacturing_places) score+=1;
-    if(p.countries_tags && p.countries_tags.length) score+=0.5;
-    return score;
-  }
-
-  for(const d of respuestas){
-    for(const p of ((d&&d.products)||[])){
-      if(!p || !p.code) continue;
-      const code=String(p.code);
-      if(vistos.has(code) || code===codigo) continue;
-      const tieneNombre=String(p.product_name||p.product_name_es||"").trim();
-      const tieneMarca=String(p.brands||"").trim();
-      if(!tieneNombre && !tieneMarca) continue;
-      vistos.add(code);
-      candidatos.push({p,score:puntuar(p)});
-    }
-  }
-
-  candidatos.sort((x,y)=>y.score-x.score);
-  const resultados=candidatos.filter(x=>x.score>0).slice(0,20);
-  if(!resultados.length) return {error:"sin-parecidos"};
-
-  // Países que aparecen en productos similares: solo como pista, nunca como confirmación
-  // del producto escaneado.
-  const votos={};
-  for(const c of resultados){
-    const p=c.p;
-    let pais=null;
-    if(p.manufacturing_places) pais=detectar(p.manufacturing_places);
-    if(!pais) pais=deEtiqueta(p.labels_tags);
-    if(!pais && p.emb_codes) pais=deEmb(p.emb_codes);
-    if(pais) votos[pais]=(votos[pais]||0)+(1+Math.min(c.score,8)/10);
-  }
-  const paises=Object.entries(votos).sort((x,y)=>y[1]-x[1]).map(x=>x[0]);
-
-  return {
-    resultados,
-    paises,
-    total:candidatos.length,
-    voz:"He encontrado productos similares de distintas marcas. Revisa los resultados para comparar la marca y el país de fabricación."
-  };
-}
-
-function pintarResultadosWeb(r){
-  const box=$("webResultados");
-  if(!box) return;
-  if(!r || !r.resultados || !r.resultados.length){ box.innerHTML=""; return; }
-  let h='<div style="background:#fff7d6;border:1px solid #e0c45c;border-radius:10px;padding:10px">';
-  h+='<b>🔎 Productos similares encontrados</b>';
-  h+='<div style="font-size:.8rem;color:#5a4200;margin:4px 0 8px">Se han buscado coincidencias en las bases abiertas de productos. La marca se muestra cuando está disponible.</div>';
-  if(r.paises && r.paises.length){
-    h+='<div style="margin-bottom:8px"><b>🌍 Países que aparecen entre los similares:</b> '+r.paises.slice(0,6).map(p=>bandera(p)+' '+esc(p)).join(' · ')+'</div>';
-  }
-  r.resultados.slice(0,12).forEach((x,i)=>{
-    const p=x.p;
-    const nom=String(p.product_name||p.product_name_es||"Producto sin nombre").trim();
-    const mar=String(p.brands||"Marca no indicada").trim()||"Marca no indicada";
-    const fab=String(p.manufacturing_places||"").trim();
-    let pais=fab?detectar(fab):null;
-    if(!pais) pais=deEtiqueta(p.labels_tags);
-    if(!pais && p.emb_codes) pais=deEmb(p.emb_codes);
-    h+='<div style="background:#fff;border-radius:8px;padding:9px;margin-top:7px;border:1px solid #ddd">';
-    h+='<b>'+(i+1)+'. '+esc(nom)+'</b><br>';
-    h+='🏷️ <b>Marca:</b> '+esc(mar)+'<br>';
-    if(pais) h+='🏭 <b>Fabricación/origen asociado:</b> '+esc(pais)+(fab?' · '+esc(fab):'')+'<br>';
-    else if(fab) h+='📍 <b>Lugar indicado:</b> '+esc(fab)+'<br>';
-    h+='<small>🔢 Código: '+esc(p.code)+'</small>';
-    h+='</div>';
-  });
-  h+='</div>';
-  box.innerHTML=h;
-}
-
 let actual = null; // {codigo, prefijo, info}
 window.actual = actual;
-let cacheWeb = null; // último resultado de "productos similares" para el producto actual
+let etiquetaPendienteL = null;
+
+function integrarEtiquetaEnResultadoL(r){
+  if(!r) return;
+  const box=$("fabrica");
+  if(!box) return;
+
+  // La etiqueta pasa a formar parte de la ficha principal, justo debajo
+  // de la información del producto, y no queda únicamente en el visor OCR.
+  let h='<div id="lqddEtiquetaFicha" style="margin-top:12px;padding:10px;background:#eef9ff;border:1px solid #4d9dcc;border-radius:10px">';
+  h+='<b>🏷️ Información leída de la etiqueta</b>';
+  const add=(label,val,icon)=>{if(val) h+='<div style="margin:5px 0">'+icon+' <b>'+label+':</b> '+escL(val)+'</div>';};
+  add("Fabricado en",r.fabricadoEn,"🏭");
+  add("Fabricante",r.fabricante,"🏢");
+  add("Envasado en",r.envasadoEn,"📦");
+  add("Envasado por",r.envasadoPor,"📦");
+  add("Importado por",r.importadoPor,"🚚");
+  add("Procesado",r.procesado,"⚙️");
+  add("Distribuido por",r.distribuidoPor,"🚛");
+  add("Etiquetado por",r.etiquetadoPor,"🏷️");
+  add("Acondicionado por",r.acondicionadoPor,"🔧");
+  add("Origen declarado",r.origen,"🌍");
+  add("Dirección",r.direccion,"📍");
+  add("Ciudad",r.ciudad,"🏙️");
+  add("Provincia",r.provincia,"🗺️");
+  add("País detectado",r.pais,"🌐");
+  h+='</div>';
+
+  const old=document.getElementById("lqddEtiquetaFicha");
+  if(old) old.remove();
+  box.insertAdjacentHTML("beforeend",h);
+
+  // Si la etiqueta declara fabricación, actualizamos también el indicador
+  // principal de "Fabricado en".
+  if(r.fabricadoEn){
+    $("fabricadoEn").textContent="🟢 Fabricado en "+r.fabricadoEn+" (según etiqueta)";
+  }
+}
+
 const $ = id => document.getElementById(id);
 
 async function mostrar(codigo){
@@ -823,10 +739,15 @@ async function mostrar(codigo){
   const prefijo = paisDe(codigoProducto);
   const cuadro = $("resultado"); cuadro.style.display="block"; cuadro.className=""; actual=null;
   $("codigo").textContent="Código: "+codigo;
-  $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("gs1Datos").innerHTML=""; $("buscaMsg").textContent=""; $("webResultados").innerHTML=""; $("webResultados").style.display=""; $("buscaWeb").style.display="none"; $("buscaWeb").textContent="🔎 Buscar dónde se fabrica"; cacheWeb=null;
+  $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("gs1Datos").innerHTML=""; $("buscaMsg").textContent=""; $("webResultados").innerHTML=""; $("webResultados").style.display=""; $("buscaWeb").style.display="none"; $("buscaWeb").textContent="🔎 Buscar dónde se fabrica";
   if(!prefijo){ $("pais").textContent="Código no válido"; hablar("Código no válido"); return; }
   $("pais").textContent="🔎 Consultando información del producto...";
   const info=await buscarProducto(codigoProducto); actual={codigo:codigoProducto,prefijo,info,gs1Raw}; window.actual=actual; pintar();
+  if(etiquetaPendienteL){
+    integrarEtiquetaEnResultadoL(etiquetaPendienteL);
+    actualizarEtiquetaEnFicha(codigoProducto,etiquetaPendienteL);
+    etiquetaPendienteL=null;
+  }
 }
 
 
@@ -1341,8 +1262,15 @@ document.getElementById("buscaWeb").onclick = async () => {
       bx.innerHTML=h;bx.style.display="block";ib.textContent="🙈 Ocultar ingredientes";
       if(typeof hablar==="function") hablar("Los ingredientes son: "+r.ingredientes+(r.alergenos?". Alérgenos: "+r.alergenos:""));
     };
-    // La lectura de etiqueta también alimenta la ficha del mismo producto.
-    try{ if(window.lqddGuardarEtiquetaHistorial && window.actual && window.actual.codigo) window.lqddGuardarEtiquetaHistorial(window.actual.codigo,r); }catch(e){}
+    // La lectura de etiqueta actualiza la ficha principal y el historial del mismo producto.
+    try{
+      if(window.actual && window.actual.codigo){
+        integrarEtiquetaEnResultadoL(r);
+        window.lqddGuardarEtiquetaHistorial(window.actual.codigo,r);
+      }else{
+        etiquetaPendienteL=r;
+      }
+    }catch(e){ etiquetaPendienteL=r; }
   }
 
   function prepararImagenEtiquetaL(file, conContraste){
