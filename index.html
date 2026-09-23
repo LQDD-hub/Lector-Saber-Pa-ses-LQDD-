@@ -148,18 +148,34 @@ function bandera(nombre){
 }
 
 // Historial (se guarda en el propio móvil)
+function escHist(s){ return String(s??"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function cargarHist(){ try{ return JSON.parse(localStorage.getItem("hist")||"[]"); }catch(e){ return []; } }
-function guardar(codigo, pais, fab){
+function guardar(codigo, pais, fab, extra){
   const h = cargarHist().filter(x => x.codigo !== codigo);
-  h.unshift({codigo, pais, fab, fecha:new Date().toLocaleString("es-ES")});
+  h.unshift({codigo, pais, fab, fecha:new Date().toLocaleString("es-ES"),
+    nombre:(extra&&extra.nombre)||"", frase:(extra&&extra.frase)||"", snapshot:(extra&&extra.snapshot)||null});
   try{ localStorage.setItem("hist", JSON.stringify(h.slice(0,50))); }catch(e){}
   pintarHist();
+}
+function abrirHistorial(idx){
+  const h = cargarHist(), entry = h[idx];
+  if(!entry || !entry.snapshot) return;
+  actual = {codigo:entry.codigo, prefijo:entry.snapshot.prefijo, info:entry.snapshot.info, gs1Raw:entry.snapshot.gs1Raw};
+  pintar(true, true);
+  const r = document.getElementById("resultado");
+  if(r) r.scrollIntoView({behavior:"smooth", block:"start"});
 }
 function pintarHist(){
   const h = cargarHist();
   document.getElementById("hist").innerHTML = h.length
-    ? h.map(x => '<div class="item">'+bandera(x.pais)+' <b>'+x.pais+'</b>'+(x.fab?(x.fab.indexOf('según')===0?' · 🏷️ ':' · 🏭 ')+x.fab:'')+'<small>'+x.codigo+' · '+x.fecha+'</small></div>').join("")
+    ? h.map((x,i) => '<div class="item" data-idx="'+i+'" style="cursor:pointer">'+bandera(x.pais)+' <b>'+escHist(x.nombre||x.pais)+'</b>'
+        +(x.frase?' · <span style="color:#1e8e3e;font-weight:bold">'+escHist(x.frase)+'</span>':'')
+        +(x.fab?(x.fab.indexOf('según')===0?' · 🏷️ ':' · 🏭 ')+escHist(x.fab):'')
+        +'<small>'+escHist(x.codigo)+' · '+escHist(x.fecha)+'</small></div>').join("")
     : '<small>Aún no has escaneado nada.</small>';
+  document.querySelectorAll("#hist .item").forEach(el=>{
+    el.onclick = () => abrirHistorial(+el.getAttribute("data-idx"));
+  });
 }
 document.getElementById("borrar").onclick = () => { try{ localStorage.removeItem("hist"); }catch(e){} pintarHist(); };
 pintarHist();
@@ -714,7 +730,7 @@ function pintarGS1(raw){
   box.innerHTML=h ? '<div style="padding:10px;background:#fff7d6;border-radius:10px;border:1px solid #e0c45c">'+h+'</div>' : '';
   return d;
 }
-function pintar(silencio){
+function pintar(silencio, sinGuardar){
   const {codigo,prefijo,info}=actual, cuadro=$("resultado");
   const gs1=pintarGS1(actual.gs1Raw||"");
   const paisPrefijo=prefijo==="España / Andorra"?"España":prefijo;
@@ -761,10 +777,15 @@ function pintar(silencio){
     btnIng.textContent="🧪 ¿Quieres saber los ingredientes?";
   }
   if(boxIng){ boxIng.style.display="none"; boxIng.innerHTML=""; }
-  if(!silencio){ if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia(); }
+  if(!silencio && !sinGuardar){ if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia(); }
   const detalle=tieneFabricacion?(info.prod.nivel==="confirmado"?"El producto tiene un dato de fabricación declarado en "+paisFab:(info.prod.voz||"Hay una evidencia asociada a un establecimiento en "+paisFab+", pero no demuestra por sí sola la fabricación")):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no hay una evidencia pública suficiente para confirmar dónde se fabricó.";
-  hablar((frase?frase+" ":"")+detalle);
-  guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1");
+  if(!sinGuardar) hablar((frase?frase+" ":"")+detalle);
+  if(!sinGuardar){
+    let snapshot=null;
+    try{ snapshot=JSON.parse(JSON.stringify({prefijo,info,gs1Raw:actual.gs1Raw||""})); }catch(e){}
+    guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1",
+      {nombre:info.nombre||"", frase, snapshot});
+  }
 }
 
 if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
@@ -974,9 +995,9 @@ document.getElementById("buscaWeb").onclick = async () => {
       acondicionadoPor:"",origen:"",direccion:"",ciudad:"",provincia:"",
       pais:"",ingredientes:"",alergenos:"",raw};
 
-    r.fabricadoEn=lineaDespues(raw,/(?:(?:fabricad[oa])\s+en|manufactured\s+in|made\s+in|produced\s+in|producid[oa]\s+en)\s*(.*)$/i);
+    r.fabricadoEn=lineaDespues(raw,/(?:(?:fabricad[oa]|hech[oa]|cread[oa]|elaborad[oa])\s+en|manufactured\s+in|made\s+in|produced\s+in|producid[oa]\s+en)\s*(.*)$/i);
     if(!r.fabricadoEn){
-      const m=raw.match(/(?:(?:fabricad[oa])\s+en|manufactured\s+in|made\s+in|produced\s+in|producid[oa]\s+en)\s*([^\n,.]+)/i);
+      const m=raw.match(/(?:(?:fabricad[oa]|hech[oa]|cread[oa]|elaborad[oa])\s+en|manufactured\s+in|made\s+in|produced\s+in|producid[oa]\s+en)\s*([^\n,.]+)/i);
       if(m) r.fabricadoEn=m[1].trim();
     }
 
@@ -1002,8 +1023,14 @@ document.getElementById("buscaWeb").onclick = async () => {
     if(alMatch) r.alergenos=alMatch[1].replace(/\s+/g," ").trim();
 
     // Dirección: solo se interpreta como dirección, nunca como prueba de fabricación.
-    const addr=/((?:c\/|c\.|calle|avenida|av\.|paseo|plaza|camino|carretera|finca|domicilio|address|street|road|avenue)\s+[^\n]+)/i.exec(raw);
-    if(addr) r.direccion=addr[1].trim();
+    const addr=/((?:c\/|c\.|calle|avenida|av\.|paseo|pasaje|pje\.|callejón|plaza|camino|carretera|finca|domicilio|address|street|road|avenue)\s+[^\n]+)/i.exec(raw);
+    if(addr) r.direccion=addr[1].trim().replace(/\bs\/?n\b\.?/i,"s/n");
+
+    // Línea explícita de país (ej. "País: España" o "Country: Spain"), aparte de "país de origen".
+    if(!r.pais){
+      const lp=lineaDespues(raw,/^(?:pa[ií]s|country)\s*:?\s*(.*)$/i);
+      if(lp) r.pais=detectarPaisL(lp)||"";
+    }
 
     // Código postal español + ciudad + provincia entre paréntesis.
     const cp=/\b(\d{5})\s+([^,\n(]+?)(?:\s*\(([^)\n]+)\))?(?:,\s*([A-Za-zÁÉÍÓÚáéíóúÑñ ]+))?(?=\s*$|\n)/i.exec(raw);
@@ -1017,7 +1044,7 @@ document.getElementById("buscaWeb").onclick = async () => {
     if(r.fabricadoEn) r.fabricadoEn=detectarPaisL(r.fabricadoEn)||r.fabricadoEn;
     if(r.envasadoEn) r.envasadoEn=detectarPaisL(r.envasadoEn)||r.envasadoEn;
     if(!r.origen) r.origen=detectarPaisL(raw)||"";
-    r.pais=detectarPaisL(raw)||r.pais;
+    if(!r.pais) r.pais=detectarPaisL(raw)||"";
 
     return r;
   }
