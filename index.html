@@ -370,6 +370,18 @@ const ALIAS = [
 const EMB = {AT:"Austria",BE:"Bélgica",BG:"Bulgaria",CY:"Chipre",CZ:"Chequia",DE:"Alemania",DK:"Dinamarca",EE:"Estonia",ES:"España",FI:"Finlandia",FR:"Francia",GR:"Grecia",HR:"Croacia",HU:"Hungría",IE:"Irlanda",IT:"Italia",LT:"Lituania",LU:"Bélgica / Luxemburgo",LV:"Letonia",MT:"Malta",NL:"Países Bajos",PL:"Polonia",PT:"Portugal",RO:"Rumanía",SE:"Suecia",SI:"Eslovenia",SK:"Eslovaquia",GB:"Reino Unido",UK:"Reino Unido"};
 const norm = t => String(t||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
 const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const ALERGENOS_CLAVE = ["altramuces","altramuz","crustáceos","crustaceos","crustáceo","crustaceo",
+  "moluscos","molusco","cacahuetes","cacahuete","frutos secos","almendras","almendra","avellanas","avellana",
+  "anacardos","anacardo","pistachos","pistacho","macadamia","nueces","nuez","sulfitos","sulfito",
+  "dióxido de azufre","dioxido de azufre","sésamo","sesamo","ajonjolí","ajonjoli","mostaza","apio",
+  "soja","lactosa","lácteos","lacteos","lácteo","lacteo","leche","huevos","huevo","gluten","trigo",
+  "cebada","centeno","avena","espelta","kamut","pescado","maní","mani","lupino"];
+function resaltarAlergenos(htmlEscapado){
+  const patron=ALERGENOS_CLAVE.slice().sort((a,b)=>b.length-a.length)
+    .map(k=>k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|');
+  const re=new RegExp('('+patron+')','gi');
+  return String(htmlEscapado||"").replace(re,'<mark style="background:#ffe08a;color:#7a4a00;padding:0 2px;border-radius:3px;font-weight:bold">$1</mark>');
+}
 
 // Busca el primer país que aparece nombrado en un texto libre
 function detectar(texto){
@@ -853,8 +865,8 @@ if(verIngredientesBtn){
       box.innerHTML = "";
       btn.textContent = "🧪 ¿Quieres saber los ingredientes?";
     } else {
-      let html = "🧪 <b>Ingredientes:</b> " + esc(info.ingredients);
-      if(info.alergenos) html += "<br>⚠️ <b>Alérgenos:</b> " + esc(info.alergenos);
+      let html = "🧪 <b>Ingredientes:</b> " + resaltarAlergenos(esc(info.ingredients));
+      if(info.alergenos) html += "<br>⚠️ <b>Alérgenos:</b> " + resaltarAlergenos(esc(info.alergenos));
       box.innerHTML = html;
       box.style.display = "block";
       btn.textContent = "🙈 Ocultar ingredientes";
@@ -908,6 +920,18 @@ document.getElementById("buscaWeb").onclick = async () => {
   const E = id => document.getElementById(id);
   const normL = t => String(t||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
   const escL = s => String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const ALERGENOS_CLAVE_L = ["altramuces","altramuz","crustáceos","crustaceos","crustáceo","crustaceo",
+    "moluscos","molusco","cacahuetes","cacahuete","frutos secos","almendras","almendra","avellanas","avellana",
+    "anacardos","anacardo","pistachos","pistacho","macadamia","nueces","nuez","sulfitos","sulfito",
+    "dióxido de azufre","dioxido de azufre","sésamo","sesamo","ajonjolí","ajonjoli","mostaza","apio",
+    "soja","lactosa","lácteos","lacteos","lácteo","lacteo","leche","huevos","huevo","gluten","trigo",
+    "cebada","centeno","avena","espelta","kamut","pescado","maní","mani","lupino"];
+  function resaltarAlergenosL(htmlEscapado){
+    const patron=ALERGENOS_CLAVE_L.slice().sort((a,b)=>b.length-a.length)
+      .map(k=>k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|');
+    const re=new RegExp('('+patron+')','gi');
+    return String(htmlEscapado||"").replace(re,'<mark style="background:#ffe08a;color:#7a4a00;padding:0 2px;border-radius:3px;font-weight:bold">$1</mark>');
+  }
 
   const paisesL = [
     ["España",["espana","spain","espagne","spanien"]],
@@ -951,7 +975,25 @@ document.getElementById("buscaWeb").onclick = async () => {
     ["República Dominicana",["republica dominicana","dominican republic"]],
     ["Costa Rica",["costa rica"]],["Panamá",["panama"]],
     ["Guatemala",["guatemala"]],["El Salvador",["el salvador"]],
-    ["Honduras",["honduras"]],["Nicaragua",["nicaragua"]]
+    ["Honduras",["honduras"]],["Nicaragua",["nicaragua"]],
+    ["Irlanda",["irlanda","ireland"]],["Luxemburgo",["luxemburgo","luxembourg"]],
+    ["Malta",["malta"]],["Chipre",["chipre","cyprus"]],["Islandia",["islandia","iceland"]],
+    ["Estonia",["estonia"]],["Letonia",["letonia","latvia"]],["Lituania",["lituania","lithuania"]],
+    ["Georgia",["georgia"]],["Armenia",["armenia"]],["Azerbaiyán",["azerbaiyan","azerbaijan"]],
+    ["Kazajistán",["kazajistan","kazakhstan"]],["Uzbekistán",["uzbekistan","uzbekistan"]],
+    ["Mongolia",["mongolia"]],["Costa de Marfil",["costa de marfil","ivory coast","cote d'ivoire"]],
+    ["Nigeria",["nigeria"]],["Senegal",["senegal"]],["Mauritania",["mauritania"]],
+    ["Angola",["angola"]],["Mozambique",["mozambique"]],["Zambia",["zambia"]],
+    ["Zimbabue",["zimbabue","zimbabwe"]],["Botsuana",["botsuana","botswana"]],
+    ["Namibia",["namibia"]],["Camerún",["camerun","cameroon"]],["Madagascar",["madagascar"]],
+    ["Libia",["libia","libya"]],["Sudán",["sudan"]],["Qatar",["qatar"]],
+    ["Kuwait",["kuwait"]],["Baréin",["barein","bahrain"]],["Omán",["oman"]],
+    ["Yemen",["yemen"]],["Irak",["irak","iraq"]],["Siria",["siria","syria"]],
+    ["Andorra",["andorra"]],["Mónaco",["monaco","mónaco"]],["Liechtenstein",["liechtenstein"]],
+    ["Bosnia y Herzegovina",["bosnia"]],["Macedonia del Norte",["macedonia"]],
+    ["Montenegro",["montenegro"]],["Albania",["albania"]],["Moldavia",["moldavia","moldova"]],
+    ["Bielorrusia",["bielorrusia","belarus"]],["Papúa Nueva Guinea",["papua nueva guinea","papua new guinea"]],
+    ["Laos",["laos"]]
   ];
 
   function detectarPaisL(texto){
@@ -962,6 +1004,57 @@ document.getElementById("buscaWeb").onclick = async () => {
         const i=t.indexOf(a);
         if(i>=0 && i<pos){pos=i;mejor=pais;}
       }
+    }
+    return mejor;
+  }
+
+  // Ciudades conocidas -> país. Sirve para deducir el país aunque la etiqueta
+  // no lo escriba explícitamente (solo pone la ciudad).
+  const ciudadesL = [
+    ["Madrid","España"],["Barcelona","España"],["Valencia","España"],["Sevilla","España"],
+    ["Zaragoza","España"],["Málaga","España"],["Murcia","España"],["Palma de Mallorca","España"],
+    ["Palma","España"],["Bilbao","España"],["Alicante","España"],["Córdoba","España"],
+    ["Valladolid","España"],["Vigo","España"],["Gijón","España"],["Granada","España"],
+    ["Vitoria","España"],["Elche","España"],["Oviedo","España"],["Badalona","España"],
+    ["Cartagena","España"],["Terrassa","España"],["Tarrasa","España"],["Jerez de la Frontera","España"],
+    ["Jerez","España"],["Sabadell","España"],["Móstoles","España"],["Alcalá de Henares","España"],
+    ["Pamplona","España"],["Fuenlabrada","España"],["Almería","España"],["Leganés","España"],
+    ["Donostia","España"],["San Sebastián","España"],["Burgos","España"],["Santander","España"],
+    ["Castellón","España"],["Getafe","España"],["Albacete","España"],["Ceuta","España"],
+    ["Melilla","España"],["Logroño","España"],["Badajoz","España"],["Salamanca","España"],
+    ["Huelva","España"],["Marbella","España"],["Lleida","España"],["Tarragona","España"],
+    ["Cádiz","España"],["Toledo","España"],["Girona","España"],["Ourense","España"],
+    ["A Coruña","España"],["La Coruña","España"],["Lugo","España"],["Pontevedra","España"],
+    ["Cáceres","España"],["Segovia","España"],["Ávila","España"],["Cuenca","España"],
+    ["Soria","España"],["Teruel","España"],["Zamora","España"],["Palencia","España"],
+    ["Shenzhen","China"],["Guangzhou","China"],["Shanghái","China"],["Shanghai","China"],
+    ["Pekín","China"],["Beijing","China"],["Yiwu","China"],["Ningbo","China"],["Dongguan","China"],
+    ["Hangzhou","China"],["Shantou","China"],["Foshan","China"],["Qingdao","China"],
+    ["Xiamen","China"],["Wenzhou","China"],["Jinhua","China"],["Guangdong","China"],["Zhejiang","China"],
+    ["Casablanca","Marruecos"],["Tánger","Marruecos"],["Tanger","Marruecos"],["Rabat","Marruecos"],
+    ["Fez","Marruecos"],["Fès","Marruecos"],["Agadir","Marruecos"],["Marrakech","Marruecos"],
+    ["Estambul","Turquía"],["Istanbul","Turquía"],["Izmir","Turquía"],["Ankara","Turquía"],["Bursa","Turquía"],
+    ["Ho Chi Minh","Vietnam"],["Hanói","Vietnam"],["Hanoi","Vietnam"],
+    ["Yakarta","Indonesia"],["Jakarta","Indonesia"],
+    ["Bombay","India"],["Mumbai","India"],["Nueva Delhi","India"],["Delhi","India"],
+    ["Bangalore","India"],["Chennai","India"],
+    ["Milán","Italia"],["Milan","Italia"],["Roma","Italia"],["Nápoles","Italia"],["Turín","Italia"],
+    ["París","Francia"],["Paris","Francia"],["Lyon","Francia"],["Marsella","Francia"],
+    ["Berlín","Alemania"],["Berlin","Alemania"],["Múnich","Alemania"],["Munich","Alemania"],
+    ["Hamburgo","Alemania"],["Fráncfort","Alemania"],["Frankfurt","Alemania"],
+    ["Lisboa","Portugal"],["Oporto","Portugal"],["Porto","Portugal"],
+    ["Nueva York","Estados Unidos"],["Los Ángeles","Estados Unidos"],["Chicago","Estados Unidos"],
+    ["Miami","Estados Unidos"],
+    ["Londres","Reino Unido"],["London","Reino Unido"],["Manchester","Reino Unido"],["Birmingham","Reino Unido"],
+    ["Ciudad de México","México"],["Guadalajara","México"],["Monterrey","México"],
+    ["São Paulo","Brasil"],["Sao Paulo","Brasil"],["Río de Janeiro","Brasil"],["Rio de Janeiro","Brasil"]
+  ];
+  function detectarCiudadL(texto){
+    const t=normL(texto);
+    let mejor=null,pos=Infinity;
+    for(const [ciudad,pais] of ciudadesL){
+      const i=t.indexOf(normL(ciudad));
+      if(i>=0 && i<pos){pos=i;mejor={ciudad,pais};}
     }
     return mejor;
   }
@@ -1046,6 +1139,18 @@ document.getElementById("buscaWeb").onclick = async () => {
     if(!r.origen) r.origen=detectarPaisL(raw)||"";
     if(!r.pais) r.pais=detectarPaisL(raw)||"";
 
+    // Si no hay país (o falta la ciudad), buscamos si aparece el nombre de alguna
+    // ciudad conocida en el mundo y deducimos el país a partir de ella (como pista,
+    // igual que con la dirección: no se toma como prueba de fabricación).
+    if(!r.ciudad || !r.pais){
+      const cd=detectarCiudadL(raw);
+      if(cd){
+        if(!r.ciudad) r.ciudad=cd.ciudad;
+        if(!r.pais) r.pais=cd.pais;
+        if(!r.origen) r.origen=cd.pais;
+      }
+    }
+
     return r;
   }
 
@@ -1074,14 +1179,15 @@ document.getElementById("buscaWeb").onclick = async () => {
     ib.textContent="🧪 ¿Quieres saber los ingredientes?";
     ib.onclick=function(){
       if(bx.style.display!=="none"){bx.style.display="none";ib.textContent="🧪 ¿Quieres saber los ingredientes?";return;}
-      let h="<b>🧪 Ingredientes:</b> "+escL(r.ingredientes);
-      if(r.alergenos) h+="<br><br>⚠️ <b>Alérgenos:</b> "+escL(r.alergenos);
+      let h="<b>🧪 Ingredientes:</b> "+resaltarAlergenosL(escL(r.ingredientes));
+      if(r.alergenos) h+="<br><br>⚠️ <b>Alérgenos:</b> "+resaltarAlergenosL(escL(r.alergenos));
       bx.innerHTML=h;bx.style.display="block";ib.textContent="🙈 Ocultar ingredientes";
       if(typeof hablar==="function") hablar("Los ingredientes son: "+r.ingredientes+(r.alergenos?". Alérgenos: "+r.alergenos:""));
     };
   }
 
-  function prepararImagenEtiquetaL(file){
+  function prepararImagenEtiquetaL(file, conContraste){
+    if(conContraste===undefined) conContraste=true;
     return new Promise((resolve,reject)=>{
       const fr=new FileReader();
       fr.onerror=()=>reject(new Error("No se pudo abrir la foto"));
@@ -1096,20 +1202,30 @@ document.getElementById("buscaWeb").onclick = async () => {
           const c=document.createElement("canvas"); c.width=w; c.height=h;
           const x=c.getContext("2d",{willReadFrequently:true});
           x.drawImage(img,0,0,w,h);
-          const d=x.getImageData(0,0,w,h), a=d.data;
-          // Mejora el contraste sin eliminar completamente el color de la etiqueta.
-          for(let i=0;i<a.length;i+=4){
-            const g=0.299*a[i]+0.587*a[i+1]+0.114*a[i+2];
-            const v=Math.max(0,Math.min(255,(g-128)*1.35+128));
-            a[i]=a[i+1]=a[i+2]=v;
+          if(conContraste){
+            const d=x.getImageData(0,0,w,h), a=d.data;
+            // Mejora el contraste sin eliminar completamente el color de la etiqueta.
+            for(let i=0;i<a.length;i+=4){
+              const g=0.299*a[i]+0.587*a[i+1]+0.114*a[i+2];
+              const v=Math.max(0,Math.min(255,(g-128)*1.35+128));
+              a[i]=a[i+1]=a[i+2]=v;
+            }
+            x.putImageData(d,0,0);
           }
-          x.putImageData(d,0,0);
           resolve(c.toDataURL("image/jpeg",0.92));
         };
         img.src=fr.result;
       };
       fr.readAsDataURL(file);
     });
+  }
+
+  function conLimite(promesa, ms, mensaje){
+    let temporizador;
+    const limite=new Promise((_,reject)=>{
+      temporizador=setTimeout(()=>reject(new Error(mensaje||"tiempo agotado")),ms);
+    });
+    return Promise.race([promesa,limite]).finally(()=>clearTimeout(temporizador));
   }
 
   function hayDatoEtiquetaL(r){
@@ -1134,14 +1250,17 @@ document.getElementById("buscaWeb").onclick = async () => {
       }});
       try{await worker.setParameters({tessedit_pageseg_mode:"6",preserve_interword_spaces:"1",user_defined_dpi:"300"});}catch(_e){}
 
-      let ret=await worker.recognize(imagen);
+      let ret=await conLimite(worker.recognize(imagen), 20000, "OCR: primera pasada demasiado lenta");
       let texto=String(ret&&ret.data&&ret.data.text||"");
       let datos=extraerEtiquetaL(texto);
 
-      // Segunda pasada con la foto original si la primera no encontró datos claros.
+      // Segunda pasada, más suave (sin realzar tanto el contraste) pero igual de
+      // ligera que la primera, si esta no encontró datos claros. Nunca se usa la
+      // foto original sin comprimir: eso era lo que podía dejar la app colgada.
       if(!hayDatoEtiquetaL(datos)){
-        barra.style.width="65%";pct.textContent="65%";
-        ret=await worker.recognize(file);
+        barra.style.width="55%";pct.textContent="55%";
+        const imagen2=await prepararImagenEtiquetaL(file,false);
+        ret=await conLimite(worker.recognize(imagen2), 20000, "OCR: segunda pasada demasiado lenta");
         texto=String(ret&&ret.data&&ret.data.text||"");
         datos=extraerEtiquetaL(texto);
       }
@@ -1164,7 +1283,10 @@ document.getElementById("buscaWeb").onclick = async () => {
     }catch(e){
       console.error("LQDD OCR:",e);
       barra.style.width="100%";pct.textContent="Error";
-      E("lqddTextoEtiqueta").innerHTML="<b>⚠️ No se pudo leer la etiqueta.</b><br><small>Comprueba la conexión a Internet y haz una foto nítida, de cerca y con buena iluminación.</small>";
+      const lento=e && /demasiado lenta/i.test(e.message||"");
+      E("lqddTextoEtiqueta").innerHTML=lento
+        ? "<b>⚠️ La lectura ha tardado demasiado y se ha detenido.</b><br><small>Prueba con una foto más pequeña, más cerca de la etiqueta y con buena luz.</small>"
+        : "<b>⚠️ No se pudo leer la etiqueta.</b><br><small>Comprueba la conexión a Internet y haz una foto nítida, de cerca y con buena iluminación.</small>";
       res.style.display="block";
       setTimeout(()=>{estado.style.display="none";},700);
     }finally{
