@@ -21,8 +21,15 @@
   input{flex:1;padding:12px;font-size:1rem;border:1px solid #bbb;border-radius:10px}
   .fila button{width:auto;margin:0}
   #resultado{margin-top:16px;padding:16px;background:#fff;border-radius:12px;text-align:center;display:none;border:3px solid transparent}
-  #resultado.ok{background:#c9f5cf;border-color:#1e9e3a}
+  #resultado.ok{background:#c9f5cf;border-color:#1e9e3a;transition:all .45s ease}
   #resultado.mal{background:#ffd3d3;border-color:#d32f2f}
+  #resultado.compacto{padding:7px 10px;margin-top:8px;font-size:.82rem;max-height:78px;overflow:hidden;cursor:pointer;border-width:2px}
+  #resultado.compacto #frase{font-size:1rem!important;margin:2px 0!important}
+  #resultado.compacto #pais{font-size:1rem;margin:2px 0}
+  #resultado.compacto #fabrica,#resultado.compacto #fabricadoEn,#resultado.compacto #envasadoEn,
+  #resultado.compacto #buscaWeb,#resultado.compacto #buscaMsg,#resultado.compacto #verIngredientes,
+  #resultado.compacto #ingredientesBox,#resultado.compacto #webResultados,#resultado.compacto #origen,
+  #resultado.compacto #gs1Datos{display:none!important}
   #pais{font-size:1.6rem;font-weight:bold;margin:6px 0}
   small{color:#5a4200}
   h2{font-size:1.1rem;margin:22px 0 6px;color:#7a0f14}
@@ -148,22 +155,127 @@ function bandera(nombre){
   return c ? String.fromCodePoint(...[...c].map(x => 127397 + x.charCodeAt(0))) : "🌍";
 }
 
-// Historial (se guarda en el propio móvil)
-function cargarHist(){ try{ return JSON.parse(localStorage.getItem("hist")||"[]"); }catch(e){ return []; } }
+// Historial: guarda la ficha completa en el propio móvil y permite reabrirla.
+function cargarHist(){ 
+  try{ return JSON.parse(localStorage.getItem("hist")||"[]"); }
+  catch(e){ return []; }
+}
+
+function resumenVozInfo(x){
+  const i=x.info||{};
+  const partes=[];
+  if(i.nombre) partes.push("Producto: "+i.nombre);
+  if(i.marca) partes.push("Marca: "+i.marca);
+  if(i.denominacion) partes.push("Denominación: "+i.denominacion);
+  if(i.cantidad) partes.push("Cantidad: "+i.cantidad);
+  if(i.categoria) partes.push("Categoría: "+i.categoria);
+  if(i.ori) partes.push("Origen declarado: "+i.ori);
+  if(i.prod && i.prod.pais) partes.push("Fabricado en "+i.prod.pais);
+  if(i.envasadorPorEtiqueta && i.envasadorPorEtiqueta.empresa)
+    partes.push("Envasado por "+i.envasadorPorEtiqueta.empresa);
+  if(i.envasadoEtiqueta && i.envasadoEtiqueta.pais)
+    partes.push("Envasado en "+i.envasadoEtiqueta.pais);
+  if(i.direccionEtiqueta) partes.push("Dirección: "+i.direccionEtiqueta);
+  if(i.ciudadEtiqueta) partes.push("Ciudad: "+i.ciudadEtiqueta);
+  if(i.provinciaEtiqueta) partes.push("Provincia: "+i.provinciaEtiqueta);
+  if(i.paisEtiqueta) partes.push("País: "+i.paisEtiqueta);
+  if(i.etiquetadoEtiqueta && i.etiquetadoEtiqueta.fragmento)
+    partes.push("Etiquetado: "+i.etiquetadoEtiqueta.fragmento);
+  if(i.ingredients) partes.push("Los ingredientes están disponibles al desplegar el botón de ingredientes.");
+  return partes.join(". ")+".";
+}
+
 function guardar(codigo, pais, fab){
-  const h = cargarHist().filter(x => x.codigo !== codigo);
-  h.unshift({codigo, pais, fab, fecha:new Date().toLocaleString("es-ES")});
-  try{ localStorage.setItem("hist", JSON.stringify(h.slice(0,50))); }catch(e){}
+  const h=cargarHist().filter(x=>x.codigo!==codigo);
+  let infoGuardada=null;
+  try{
+    if(typeof actual!=="undefined" && actual && actual.info){
+      infoGuardada=JSON.parse(JSON.stringify(actual.info));
+    }
+  }catch(e){ infoGuardada=null; }
+
+  h.unshift({
+    codigo,
+    pais,
+    fab,
+    fecha:new Date().toLocaleString("es-ES"),
+    info:infoGuardada,
+    prefijo:(typeof actual!=="undefined" && actual)?actual.prefijo:pais,
+    gs1Raw:(typeof actual!=="undefined" && actual)?actual.gs1Raw:""
+  });
+
+  try{ localStorage.setItem("hist",JSON.stringify(h.slice(0,50))); }catch(e){}
   pintarHist();
 }
-function pintarHist(){
-  const h = cargarHist();
-  document.getElementById("hist").innerHTML = h.length
-    ? h.map(x => '<div class="item">'+bandera(x.pais)+' <b>'+x.pais+'</b>'+(x.fab?(x.fab.indexOf('según')===0?' · 🏷️ ':' · 🏭 ')+x.fab:'')+'<small>'+x.codigo+' · '+x.fecha+'</small></div>').join("")
-    : '<small>Aún no has escaneado nada.</small>';
+
+function reabrirHistorial(indice){
+  const h=cargarHist();
+  const x=h[indice];
+  if(!x) return;
+
+  const cuadro=$("resultado");
+  if(!cuadro) return;
+
+  if(x.info){
+    actual={
+      codigo:x.codigo,
+      prefijo:x.prefijo||x.pais||"Desconocido",
+      info:x.info,
+      gs1Raw:x.gs1Raw||""
+    };
+
+    cuadro.style.display="block";
+    cuadro.classList.remove("compacto");
+
+    $("codigo").textContent="Código: "+x.codigo;
+    if($("resultadoEtiquetaOCR")) $("resultadoEtiquetaOCR").style.display="none";
+    if($("ocrProgreso")) $("ocrProgreso").style.display="none";
+
+    pintar(false,true);
+
+    // La ficha se reabre completa y la voz vuelve a decir toda la información.
+    const pais=actual.prefijo==="España / Andorra"?"España":actual.prefijo;
+    const saludo=pais==="España"?"¡Viva España! ":"";
+    hablar(saludo+resumenVozInfo(x));
+
+    window.scrollTo({top:Math.max(0,cuadro.offsetTop-10),behavior:"smooth"});
+  }else{
+    mostrar(x.codigo);
+  }
 }
-document.getElementById("borrar").onclick = () => { try{ localStorage.removeItem("hist"); }catch(e){} pintarHist(); };
+
+function pintarHist(){
+  const h=cargarHist();
+  const cont=document.getElementById("hist");
+  if(!cont) return;
+
+  cont.innerHTML=h.length
+    ? h.map((x,idx)=>{
+        const pais=x.pais||"Desconocido";
+        const nombre=x.info&&x.info.nombre ? x.info.nombre : "";
+        const marca=x.info&&x.info.marca ? x.info.marca : "";
+        const fab=x.info&&x.info.prod&&x.info.prod.pais ? x.info.prod.pais : "";
+        return '<button type="button" class="item" data-hist="'+idx+'" style="width:100%;text-align:left;background:#c9f5cf;border:2px solid #1e9e3a;color:#3a3a00;cursor:pointer">'
+          +bandera(pais)+' <b>'+esc(pais)+'</b>'
+          +(marca?' · 🏷️ <b>'+esc(marca)+'</b>':'')
+          +(nombre?'<small>📦 '+esc(nombre)+'</small>':'')
+          +(fab?'<small>🏭 Fabricado en '+esc(fab)+'</small>':'')
+          +'<small>🔁 Toca para volver a abrir y escuchar todo · '+esc(x.codigo)+' · '+esc(x.fecha||"")+'</small>'
+          +'</button>';
+      }).join("")
+    : '<small>Aún no has escaneado nada.</small>';
+
+  cont.querySelectorAll("[data-hist]").forEach(b=>{
+    b.addEventListener("click",()=>reabrirHistorial(Number(b.getAttribute("data-hist"))));
+  });
+}
+
+document.getElementById("borrar").onclick=()=>{
+  try{ localStorage.removeItem("hist"); }catch(e){}
+  pintarHist();
+};
 pintarHist();
+
 
 function paisDe(codigo){
   const c = codigo.replace(/\D/g,"");
@@ -1031,33 +1143,108 @@ function pintarResultadoEtiquetaOCR(datos, textoOCR){
   box.style.display="block";
 }
 
-async function analizarFotoEtiqueta(file){
-  if(!file) return;
+function crearVariantesOCR(file){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=()=>{
+      const variantes=[];
+      const baseW=Math.min(1800,Math.max(1000,img.naturalWidth||img.width));
+      const scale=baseW/(img.naturalWidth||img.width);
+      const w=Math.round((img.naturalWidth||img.width)*scale);
+      const h=Math.round((img.naturalHeight||img.height)*scale);
 
-  actualizarOCRProgreso(0,"📷 Preparando la foto...");
-  const btn=$("fotoEtiquetaBtn");
-  if(btn){ btn.disabled=true; btn.textContent="📖 Leyendo etiqueta..."; }
+      // La foto de prueba está girada 90°. Probamos automáticamente 0/90/180/270.
+      [0,90,180,270].forEach(grados=>{
+        const rot=(grados===90||grados===270);
+        const c=document.createElement("canvas");
+        c.width=rot?h:w; c.height=rot?w:h;
+        const x=c.getContext("2d",{willReadFrequently:true});
+        x.imageSmoothingEnabled=true;
+        x.imageSmoothingQuality="high";
+        x.save();
+        x.translate(c.width/2,c.height/2);
+        x.rotate(grados*Math.PI/180);
+        x.drawImage(img,-w/2,-h/2,w,h);
+        x.restore();
 
-  try{
-    if(typeof Tesseract==="undefined") throw new Error("OCR no disponible");
+        // Variante original mejorada.
+        variantes.push({canvas:c,angulo:grados,nombre:"normal"});
 
-    const imagen=await prepararImagenOCR(file,1400);
-    actualizarOCRProgreso(0.05,"🔎 Iniciando lector de texto...");
+        // Variante en escala de grises + contraste alto, útil para letras pequeñas.
+        const d=x.getImageData(0,0,c.width,c.height);
+        const p=d.data;
+        for(let i=0;i<p.length;i+=4){
+          const g=0.299*p[i]+0.587*p[i+1]+0.114*p[i+2];
+          // Contraste suave, sin destruir caracteres finos.
+          const v=Math.max(0,Math.min(255,(g-128)*1.65+128));
+          p[i]=p[i+1]=p[i+2]=v;
+        }
+        x.putImageData(d,0,0);
+        variantes.push({canvas:c,angulo:grados,nombre:"contraste"});
+      });
+      resolve(variantes);
+    };
+    img.onerror=reject;
+    img.src=URL.createObjectURL(file);
+  });
+}
 
-    const result=await Tesseract.recognize(imagen,"spa+eng",{
+async function ocrMejorVariante(file){
+  if(typeof Tesseract==="undefined") throw new Error("OCR no disponible");
+
+  const variantes=await crearVariantesOCR(file);
+  let mejor=null;
+
+  for(let i=0;i<variantes.length;i++){
+    const v=variantes[i];
+    const result=await Tesseract.recognize(v.canvas,"spa+eng",{
       logger:m=>{
         if(m.status==="recognizing text" && typeof m.progress==="number"){
-          actualizarOCRProgreso(0.05+m.progress*0.90,"📖 Leyendo la etiqueta...");
-        }else if(m.status==="loading language traineddata"){
-          actualizarOCRProgreso(0.02,"⬇️ Cargando lector de texto...");
-        }else if(m.status==="initializing api"){
-          actualizarOCRProgreso(0.03,"⚙️ Preparando lector...");
+          // Reservamos el 15%-90% para las diferentes orientaciones.
+          const base=0.15+(i/variantes.length)*0.75;
+          actualizarOCRProgreso(base+m.progress*(0.75/variantes.length),"📖 Probando orientación y contraste...");
         }
       }
     });
 
-    actualizarOCRProgreso(0.97,"🔍 Clasificando fabricación, envasado, dirección e ingredientes...");
-    const texto=result&&result.data?result.data.text:"";
+    const texto=result&&result.data?String(result.data.text||""):"";
+    const confianza=Number(result&&result.data&&result.data.confidence||0);
+
+    // Damos más peso a palabras que realmente nos interesan.
+    const n=norm(texto);
+    const claves=[
+      "fabricado","fabricada","fabricacion","made in","manufactured","produced",
+      "envasado","envasada","embasado","embasada","packed","packaged",
+      "importado","importada","imported","etiquetado","etiquetada",
+      "ingredientes","ingredients","calle","avenida","finca","domicilio",
+      "address","china","spain","espana","mercadona","harbin"
+    ];
+    let puntos=0;
+    for(const k of claves) if(n.includes(norm(k))) puntos+=12;
+    puntos += Math.min(40,texto.length/25);
+    puntos += confianza*0.35;
+
+    if(!mejor || puntos>mejor.puntos){
+      mejor={texto,confianza,puntos,angulo:v.angulo,nombre:v.nombre};
+    }
+  }
+
+  return mejor;
+}
+
+async function analizarFotoEtiqueta(file){
+  if(!file) return;
+
+  actualizarOCRProgreso(0,"📷 Preparando y corrigiendo la orientación...");
+  const btn=$("fotoEtiquetaBtn");
+  if(btn){ btn.disabled=true; btn.textContent="📖 Leyendo etiqueta..."; }
+
+  try{
+    actualizarOCRProgreso(0.05,"🔄 Corrigiendo automáticamente la orientación...");
+    const mejor=await ocrMejorVariante(file);
+
+    actualizarOCRProgreso(0.94,"🔍 Analizando fabricación, importador, dirección e ingredientes...");
+    const texto=mejor.texto;
     const datos=detectarDatosEtiqueta(texto);
 
     etiquetaFabricacion=datos.fabricacion||null;
@@ -1076,20 +1263,18 @@ async function analizarFotoEtiqueta(file){
     if(datos.fabricacion && datos.fabricacion.pais) mensajes.push("Fabricado en "+datos.fabricacion.pais);
     if(datos.envasado && datos.envasado.pais) mensajes.push("Envasado en "+datos.envasado.pais);
     if(datos.envasadorPor) mensajes.push("Envasado por "+datos.envasadorPor.empresa);
-    if(datos.etiquetado) mensajes.push("Etiquetado");
+    if(datos.etiquetado) mensajes.push("Etiquetado detectado");
     if(datos.direccion) mensajes.push("Dirección detectada");
-    if(datos.ingredientes) mensajes.push("Ingredientes leídos");
+    if(datos.ciudad) mensajes.push("Ciudad detectada");
+    if(datos.ingredientes) mensajes.push("Ingredientes detectados");
 
-    actualizarOCRProgreso(1, mensajes.length ? "✅ "+mensajes.join(" · ") : "⚪ No encontré datos claros en la etiqueta.");
+    actualizarOCRProgreso(1, mensajes.length ? "✅ "+mensajes.join(" · ") : "⚪ No encontré datos claros.");
 
-    if(datos.ingredientes){
-      // Los ingredientes quedan ocultos hasta que el usuario despliegue el botón.
-      if(actual && actual.info){
-        const bi=$("verIngredientes");
-        if(bi){
-          bi.style.display="block";
-          bi.textContent="🧪 ¿Quieres saber los ingredientes?";
-        }
+    if(datos.ingredientes && actual && actual.info){
+      const bi=$("verIngredientes");
+      if(bi){
+        bi.style.display="block";
+        bi.textContent="🧪 ¿Quieres saber los ingredientes?";
       }
     }
 
@@ -1100,7 +1285,7 @@ async function analizarFotoEtiqueta(file){
     if(voz.length) hablar(voz.join(". ")+".");
   }catch(err){
     console.error(err);
-    actualizarOCRProgreso(1,"⚠️ No pude leer la etiqueta. Prueba con una foto más cercana y nítida.");
+    actualizarOCRProgreso(1,"⚠️ No pude leer la etiqueta. Prueba acercando la cámara y evitando reflejos.");
   }finally{
     if(btn){ btn.disabled=false; btn.textContent="📸 Leer etiqueta: ¿Dónde está fabricado?"; }
   }
@@ -1178,7 +1363,7 @@ function pintarGS1(raw){
   box.innerHTML=h ? '<div style="padding:10px;background:#fff7d6;border-radius:10px;border:1px solid #e0c45c">'+h+'</div>' : '';
   return d;
 }
-function pintar(silencio){
+function pintar(silencio, desdeHistorial=false){
   const {codigo,prefijo,info}=actual, cuadro=$("resultado");
   const gs1=pintarGS1(actual.gs1Raw||"");
   const paisPrefijo=prefijo==="España / Andorra"?"España":prefijo;
@@ -1251,6 +1436,18 @@ function pintar(silencio){
   const detalle=tieneFabricacion?(info.prod.nivel==="confirmado"?"El producto tiene un dato de fabricación declarado en "+paisFab:(info.prod.voz||"Hay una evidencia asociada a un establecimiento en "+paisFab+", pero no demuestra por sí sola la fabricación")):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no hay una evidencia pública suficiente para confirmar dónde se fabricó.";
   hablar((frase?frase+" ":"")+detalle);
   guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1");
+
+  // Cuando acaba de verse una ficha verde (España), se encoge y queda disponible
+  // en el historial como una ficha ya vista. Al tocarla vuelve a abrirse completa.
+  if(!silencio && !desdeHistorial && paisPrefijo==="España"){
+    const ref=cuadro;
+    clearTimeout(window._lqddCompactTimer);
+    window._lqddCompactTimer=setTimeout(()=>{
+      if(ref && ref.style.display!=="none"){
+        ref.classList.add("compacto");
+      }
+    },3600);
+  }
 }
 
 if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
@@ -1291,6 +1488,18 @@ async function iniciar(){
   }
 }
 
+
+const resultadoCard = document.getElementById("resultado");
+if(resultadoCard){
+  resultadoCard.addEventListener("click",()=>{
+    if(resultadoCard.classList.contains("compacto")){
+      resultadoCard.classList.remove("compacto");
+      if(typeof actual!=="undefined" && actual){
+        hablar((actual.prefijo==="España"||actual.prefijo==="España / Andorra"?"¡Viva España! ":"")+resumenVozInfo(actual));
+      }
+    }
+  });
+}
 
 const toggleHist = document.getElementById("toggleHist");
 const histWrap = document.getElementById("histWrap");
