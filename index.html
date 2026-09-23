@@ -21,15 +21,8 @@
   input{flex:1;padding:12px;font-size:1rem;border:1px solid #bbb;border-radius:10px}
   .fila button{width:auto;margin:0}
   #resultado{margin-top:16px;padding:16px;background:#fff;border-radius:12px;text-align:center;display:none;border:3px solid transparent}
-  #resultado.ok{background:#c9f5cf;border-color:#1e9e3a;transition:all .45s ease}
+  #resultado.ok{background:#c9f5cf;border-color:#1e9e3a}
   #resultado.mal{background:#ffd3d3;border-color:#d32f2f}
-  #resultado.compacto{padding:7px 10px;margin-top:8px;font-size:.82rem;max-height:78px;overflow:hidden;cursor:pointer}
-  #resultado.compacto #frase{font-size:1rem!important;margin:2px 0!important}
-  #resultado.compacto #pais{font-size:1rem;margin:2px 0}
-  #resultado.compacto #fabrica,#resultado.compacto #fabricadoEn,#resultado.compacto #envasadoEn,
-  #resultado.compacto #buscaWeb,#resultado.compacto #buscaMsg,#resultado.compacto #verIngredientes,
-  #resultado.compacto #ingredientesBox,#resultado.compacto #webResultados,#resultado.compacto #origen,
-  #resultado.compacto #gs1Datos{display:none!important}
   #pais{font-size:1.6rem;font-weight:bold;margin:6px 0}
   small{color:#5a4200}
   h2{font-size:1.1rem;margin:22px 0 6px;color:#7a0f14}
@@ -46,36 +39,39 @@
 <div id="lector"></div>
 <div id="estadoEscaneo" style="margin:8px 0;text-align:center;font-size:.85rem;color:#5a4200">📷 Escanea el código para identificarlo</div>
 <button id="btn">Activar cámara</button>
-<button id="fotoEtiquetaBtn" type="button">📸 Leer etiqueta: ¿Dónde está fabricado?</button>
-<input id="fotoEtiqueta" type="file" accept="image/*" capture="environment" style="display:none">
-<div id="ocrProgreso" style="display:none;margin-top:8px;background:#fff;border-radius:10px;padding:8px;text-align:left">
-  <div style="display:flex;align-items:center;gap:8px">
-    <div id="ocrTexto" style="font-size:.85rem;color:#5a4200;margin-bottom:5px;flex:1">📷 Preparando lectura...</div>
-    <button id="ocultarOCR" type="button" style="width:auto;margin:0;padding:5px 9px;font-size:.75rem;background:#6b4e00;color:#fff">✖</button>
-  </div>
-  <div style="height:10px;background:#ddd;border-radius:99px;overflow:hidden">
-    <div id="ocrBarra" style="height:100%;width:0%;background:#1e9e3a;border-radius:99px;transition:width .15s ease"></div>
-  </div>
-  <div id="ocrPorcentaje" style="font-size:.75rem;color:#5a4200;text-align:center;margin-top:3px">0%</div>
-</div>
-<div id="resultadoEtiquetaOCR" style="display:none;margin-top:8px;background:#fff;border-radius:10px;padding:10px;text-align:left;border:1px solid #e0c45c">
-  <div style="display:flex;align-items:center;gap:8px">
-    <b style="flex:1">📋 Datos leídos de la etiqueta</b>
-    <button id="ocultarResultadoOCR" type="button" style="width:auto;margin:0;padding:5px 9px;font-size:.75rem;background:#6b4e00;color:#fff">✖</button>
-  </div>
-  <div id="resultadoEtiquetaOCRTexto" style="margin-top:8px;font-size:.95rem"></div>
-</div>
 <button id="vozBtn" type="button" style="background:#6b4e00;color:#fff">🔊 Voz: ACTIVADA</button>
 <div class="fila">
   <input id="manual" inputmode="numeric" placeholder="O escribe el código">
   <button id="ok">Ver</button>
 </div>
+
+<!-- LQDD: módulo independiente de lectura de etiqueta -->
+<section id="lqddEtiqueta" style="margin-top:14px;background:#fff;border-radius:12px;padding:12px;border:2px solid #AA151B">
+  <button id="lqddBtnEtiqueta" type="button">📷 Leer etiqueta del producto</button>
+  <input id="lqddFotoEtiqueta" type="file" accept="image/*" capture="environment" style="display:none">
+  <div id="lqddEstadoEtiqueta" style="display:none;margin-top:10px">
+    <div style="font-weight:bold;margin-bottom:5px">🔎 Leyendo etiqueta...</div>
+    <div style="height:12px;background:#ddd;border-radius:20px;overflow:hidden">
+      <div id="lqddBarraEtiqueta" style="width:0%;height:100%;background:#1e9e3a;transition:width .25s"></div>
+    </div>
+    <small id="lqddPorcentajeEtiqueta">0%</small>
+  </div>
+  <div id="lqddResultadoEtiqueta" style="display:none;margin-top:10px;text-align:left;background:#c9f5cf;border:2px solid #1e9e3a;border-radius:10px;padding:10px">
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+      <b>🏷️ Información de la etiqueta</b>
+      <button id="lqddCerrarEtiqueta" type="button" style="width:auto;margin:0;padding:6px 10px;background:#6b4e00;color:#fff">✕</button>
+    </div>
+    <div id="lqddTextoEtiqueta" style="margin-top:8px"></div>
+    <button id="lqddIngredientesEtiqueta" type="button" style="display:none;margin-top:10px">🧪 ¿Quieres saber los ingredientes?</button>
+    <div id="lqddIngredientesBox" style="display:none;margin-top:8px;background:#fff7d6;border:1px solid #e0c45c;border-radius:10px;padding:10px"></div>
+  </div>
+</section>
+
 <div id="resultado">
   <small id="codigo"></small>
   <div id="frase" style="font-size:1.4rem;font-weight:bold;margin:8px 0"></div>
   <div id="pais"></div>
   <div id="fabricadoEn" style="margin:10px 0;font-size:1.15rem;font-weight:bold"></div>
-  <div id="envasadoEn" style="margin:10px 0;font-size:1.1rem;font-weight:bold"></div>
   <div id="fabrica" style="margin:10px 0;font-size:1.1rem"></div>
   <button id="buscaWeb" type="button" style="display:none">🔎 Buscar dónde se fabrica</button>
   <div id="buscaMsg" style="font-size:.9rem;margin-top:8px"></div>
@@ -90,11 +86,8 @@
 </div>
 
 <h2>🕘 Historial</h2>
-<button id="toggleHist" type="button" style="background:#7a0f14;color:#F1BF00">👁️ Mostrar historial</button>
-<div id="histWrap" style="display:none">
-  <div id="hist"></div>
-  <button id="borrar">Borrar historial</button>
-</div>
+<div id="hist"></div>
+<button id="borrar">Borrar historial</button>
 
 <div style="text-align:center; margin: 30px auto 10px; padding: 16px;">
   <p style="color:#5a4200; font-size:.9rem; margin-bottom:10px;">
@@ -108,7 +101,6 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script>/* LQDD SCANNER: SIN ENLACES EXTERNOS NI NAVEGACION FUERA DE LA APP */</script>
 <script>
 // [desde, hasta, país] — prefijos GS1 de 3 dígitos
@@ -156,127 +148,21 @@ function bandera(nombre){
 }
 
 // Historial (se guarda en el propio móvil)
-let reabriendoHistorial=false;
-
-function cargarHist(){
-  try{ return JSON.parse(localStorage.getItem("hist")||"[]"); }
-  catch(e){ return []; }
-}
-
-function guardar(codigo,pais,fab){
-  const h=cargarHist().filter(x=>x.codigo!==codigo);
-  let copia=null;
-  try{
-    if(typeof actual!=="undefined" && actual && actual.info){
-      copia=JSON.parse(JSON.stringify(actual));
-    }
-  }catch(e){ copia=null; }
-
-  h.unshift({
-    codigo:codigo,
-    pais:pais,
-    fab:fab,
-    fecha:new Date().toLocaleString("es-ES"),
-    datos:copia
-  });
-
-  try{ localStorage.setItem("hist",JSON.stringify(h.slice(0,50))); }catch(e){}
+function cargarHist(){ try{ return JSON.parse(localStorage.getItem("hist")||"[]"); }catch(e){ return []; } }
+function guardar(codigo, pais, fab){
+  const h = cargarHist().filter(x => x.codigo !== codigo);
+  h.unshift({codigo, pais, fab, fecha:new Date().toLocaleString("es-ES")});
+  try{ localStorage.setItem("hist", JSON.stringify(h.slice(0,50))); }catch(e){}
   pintarHist();
 }
-
-function textoCompletoHistorial(x){
-  const a=x&&x.datos;
-  const i=a&&a.info?a.info:{};
-  const p=[];
-  if(i.nombre) p.push("Producto: "+i.nombre);
-  if(i.marca) p.push("Marca: "+i.marca);
-  if(i.denominacion) p.push("Denominación: "+i.denominacion);
-  if(i.cantidad) p.push("Cantidad: "+i.cantidad);
-  if(i.categoria) p.push("Categoría: "+i.categoria);
-  if(i.ori) p.push("Origen declarado: "+i.ori);
-  if(i.prod&&i.prod.pais) p.push("Fabricado en "+i.prod.pais);
-  if(i.envasadorPorEtiqueta&&i.envasadorPorEtiqueta.empresa) p.push("Envasado por "+i.envasadorPorEtiqueta.empresa);
-  if(i.envasadoEtiqueta&&i.envasadoEtiqueta.pais) p.push("Envasado en "+i.envasadoEtiqueta.pais);
-  if(i.direccionEtiqueta) p.push("Dirección: "+i.direccionEtiqueta);
-  if(i.ciudadEtiqueta) p.push("Ciudad: "+i.ciudadEtiqueta);
-  if(i.provinciaEtiqueta) p.push("Provincia: "+i.provinciaEtiqueta);
-  if(i.paisEtiqueta) p.push("País: "+i.paisEtiqueta);
-  if(i.etiquetadoEtiqueta&&i.etiquetadoEtiqueta.fragmento) p.push("Etiquetado: "+i.etiquetadoEtiqueta.fragmento);
-  if(i.ingredients) p.push("Los ingredientes están disponibles al desplegar el botón de ingredientes");
-  return p.length?p.join(". ")+".":"No hay más información disponible.";
-}
-
-function abrirHistorial(indice){
-  const h=cargarHist(), x=h[indice];
-  if(!x) return;
-
-  // Versiones antiguas del historial siguen siendo compatibles.
-  if(!x.datos){
-    if(x.codigo && typeof mostrar==="function") mostrar(x.codigo);
-    return;
-  }
-
-  try{
-    reabriendoHistorial=true;
-    actual=x.datos;
-    const cuadro=$("resultado");
-    if(!cuadro) return;
-
-    cuadro.style.display="block";
-    cuadro.classList.remove("compacto");
-    $("codigo").textContent="Código: "+actual.codigo;
-
-    if($("resultadoEtiquetaOCR")) $("resultadoEtiquetaOCR").style.display="none";
-    if($("ocrProgreso")) $("ocrProgreso").style.display="none";
-
-    // Pintamos la misma ficha guardada sin cambiarla.
-    pintar(true);
-
-    const pais=(actual.prefijo==="España / Andorra"?"España":actual.prefijo);
-    const saludo=pais==="España"?"¡Viva España! ":"";
-    hablar(saludo+textoCompletoHistorial(x));
-
-    window.scrollTo({top:Math.max(0,cuadro.offsetTop-10),behavior:"smooth"});
-  }catch(e){
-    console.error("Error al abrir historial",e);
-  }finally{
-    reabriendoHistorial=false;
-  }
-}
-
 function pintarHist(){
-  const h=cargarHist();
-  const cont=document.getElementById("hist");
-  if(!cont) return;
-
-  cont.innerHTML=h.length
-    ? h.map((x,idx)=>{
-        const pais=x.pais||"Desconocido";
-        const i=x.datos&&x.datos.info?x.datos.info:{};
-        const nombre=i.nombre||"";
-        const marca=i.marca||"";
-        const fab=i.prod&&i.prod.pais?i.prod.pais:"";
-        return '<button type="button" class="item" data-historial="'+idx+'" style="width:100%;text-align:left;background:#c9f5cf;border:2px solid #1e9e3a;color:#3a3a00;cursor:pointer">'
-          +bandera(pais)+' <b>'+esc(pais)+'</b>'
-          +(marca?' · 🏷️ <b>'+esc(marca)+'</b>':'')
-          +(nombre?'<small>📦 '+esc(nombre)+'</small>':'')
-          +(fab?'<small>🏭 Fabricado en '+esc(fab)+'</small>':'')
-          +'<small>🔁 Toca para volver a abrir y escuchar todo · '+esc(x.codigo||"")+' · '+esc(x.fecha||"")+'</small>'
-          +'</button>';
-      }).join("")
+  const h = cargarHist();
+  document.getElementById("hist").innerHTML = h.length
+    ? h.map(x => '<div class="item">'+bandera(x.pais)+' <b>'+x.pais+'</b>'+(x.fab?(x.fab.indexOf('según')===0?' · 🏷️ ':' · 🏭 ')+x.fab:'')+'<small>'+x.codigo+' · '+x.fecha+'</small></div>').join("")
     : '<small>Aún no has escaneado nada.</small>';
-
-  cont.querySelectorAll("[data-historial]").forEach(b=>{
-    b.onclick=()=>abrirHistorial(Number(b.getAttribute("data-historial")));
-  });
 }
-
-document.getElementById("borrar").onclick=()=>{
-  try{ localStorage.removeItem("hist"); }catch(e){}
-  pintarHist();
-};
+document.getElementById("borrar").onclick = () => { try{ localStorage.removeItem("hist"); }catch(e){} pintarHist(); };
 pintarHist();
-
 
 function paisDe(codigo){
   const c = codigo.replace(/\D/g,"");
@@ -533,96 +419,6 @@ async function ubicarLugar(texto,paisHint){
   finally{ clearTimeout(t); }
 }
 
-
-async function buscarIngredientesPorMarcaNombre(marca,nombre,codigo){
-  marca=String(marca||"").trim();
-  nombre=String(nombre||"").trim();
-  codigo=String(codigo||"").trim();
-
-  const campos="code,product_name,product_name_es,brands,ingredients_text,ingredients_text_es,allergens,allergens_tags";
-
-  // 1) Primero intentamos la ficha exacta por código, por si otra API sí tiene ingredientes.
-  if(codigo){
-    try{
-      const u="https://world.openfoodfacts.org/api/v2/product/"+encodeURIComponent(codigo)+"?fields="+encodeURIComponent(campos);
-      const r=await fetch(u,{signal:AbortSignal.timeout(8000)});
-      if(r.ok){
-        const d=await r.json();
-        const p=d&&d.product;
-        const ing=String((p&&p.ingredients_text_es)||(p&&p.ingredients_text)||"").trim();
-        if(ing){
-          return {
-            ingredientes:ing,
-            alergenos:String((p&&p.allergens)||"").trim(),
-            fuente:"Open Food Facts · código de barras",
-            codigo:String((p&&p.code)||codigo)
-          };
-        }
-      }
-    }catch(e){}
-  }
-
-  if(!marca && !nombre) return null;
-
-  const consultas=[];
-  if(marca && nombre) consultas.push(marca+" "+nombre);
-  if(nombre) consultas.push(nombre);
-  if(marca) consultas.push(marca);
-
-  let candidatos=[];
-  for(const q of consultas){
-    try{
-      const url="https://world.openfoodfacts.org/cgi/search.pl?action=process&json=1&page_size=50&fields="+encodeURIComponent(campos)+"&search_terms="+encodeURIComponent(q);
-      const r=await fetch(url,{signal:AbortSignal.timeout(10000)});
-      if(r.ok){
-        const d=await r.json();
-        if(Array.isArray(d.products)) candidatos=candidatos.concat(d.products);
-      }
-    }catch(e){}
-    if(candidatos.length>=50) break;
-  }
-
-  const nm=norm(nombre), mk=norm(marca);
-  const pw=palabras(nombre);
-  let mejor=null, mejorScore=-1;
-
-  for(const p of candidatos){
-    const ing=String(p.ingredients_text_es||p.ingredients_text||"").trim();
-    if(!ing) continue;
-
-    const pn=norm(p.product_name_es||p.product_name||"");
-    const pb=norm(p.brands||"");
-    let score=0;
-
-    if(codigo && String(p.code||"")===codigo) score+=100;
-    if(mk && pb.includes(mk)) score+=8;
-
-    const pp=palabras(pn);
-    const comunes=pw.filter(x=>pp.includes(x)).length;
-    score+=comunes*3;
-
-    if(nm && (pn===nm || pn.includes(nm) || nm.includes(pn))) score+=12;
-
-    if(score>mejorScore){
-      mejorScore=score;
-      mejor=p;
-    }
-  }
-
-  // Con marca+nombre exigimos coincidencia razonable; con solo marca no
-  // devolvemos ingredientes de un producto arbitrario.
-  const minimo=(marca&&nombre)?6:10;
-  if(!mejor || mejorScore<minimo) return null;
-
-  return {
-    ingredientes:String(mejor.ingredients_text_es||mejor.ingredients_text||"").trim(),
-    alergenos:String(mejor.allergens||"").trim(),
-    fuente:"Open Food Facts · coincidencia por marca y producto",
-    codigo:String(mejor.code||"")
-  };
-}
-
-
 async function buscarProducto(codigo){
   const bases=["openfoodfacts","openbeautyfacts","openproductsfacts"];
   const campos="product_name,abbreviated_product_name,generic_name,brands,quantity,product_quantity,product_quantity_unit,categories,categories_tags,manufacturing_places,manufacturing_places_tags,cities_tags,origins,origins_tags,origin,labels,labels_tags,emb_codes,emb_codes_tags,emb_codes_orig,packaging_text,customer_service,producer,stores,link,knowledge_panels,ingredients_text,ingredients_text_es,allergens,allergens_tags";
@@ -657,11 +453,9 @@ async function buscarProducto(codigo){
   const emb=campo("emb_codes"), embTags=campo("emb_codes_tags"), embOrig=campo("emb_codes_orig");
   const packaging=campo("packaging_text"), customer=campo("customer_service"), producer=campo("producer"), link=campo("link");
   const panels=campo("knowledge_panels");
-  let ingredients=campo("ingredients_text_es")||campo("ingredients_text");
-  let ingredientsSource=ingredients?"Ficha exacta del producto":"";
-  let ingredientsCode="";
+  const ingredients=campo("ingredients_text_es")||campo("ingredients_text");
   const alergenosRaw=campo("allergens");
-  let alergenos=alergenosRaw?String(alergenosRaw).split(",").map(a=>a.replace(/^[a-z]{2}:/i,"").trim()).filter(Boolean).join(", "):"";
+  const alergenos=alergenosRaw?String(alergenosRaw).split(",").map(a=>a.replace(/^[a-z]{2}:/i,"").trim()).filter(Boolean).join(", "):"";
 
   let evidencias=[];
   let p;
@@ -713,25 +507,13 @@ async function buscarProducto(codigo){
   evidencias.sort((a,b)=>(prioridad[b.nivel]||0)-(prioridad[a.nivel]||0));
   const prod=evidencias.find(x=>x.pais)||null;
 
-  // Si la ficha exacta no trae ingredientes, intentamos una coincidencia
-  // conservadora por marca + nombre. Nunca inventamos ingredientes.
-  if(!ingredients){
-    const extra=await buscarIngredientesPorMarcaNombre(marca,nombre,codigo);
-    if(extra){
-      ingredients=extra.ingredientes;
-      alergenos=alergenos || extra.alergenos;
-      ingredientsSource=extra.fuente;
-      ingredientsCode=extra.codigo;
-    }
-  }
-
   let envasado=null;
   const ep=String(emb||embOrig||"");
   if((p=deEmb(ep))) envasado={pais:p,fuente:"Código de establecimiento/envasador",nivel:"asociado",detalle:ep};
   else if(embInfo) envasado=embInfo;
   else if((p=deEmb(embTags))) envasado={pais:p,fuente:"Código de establecimiento/envasador",nivel:"asociado",detalle:String(embTags)};
 
-  return {nombre,marca,denominacion,cantidad,categoria,fab,ori,oriTags,emb,embTags,embOrig,packaging,customer,producer,ciudades,panels,prod,envasado,evidencias,fuentes:ps.length,ingredients,alergenos,ingredientsSource,ingredientsCode};
+  return {nombre,marca,denominacion,cantidad,categoria,fab,ori,oriTags,emb,embTags,embOrig,packaging,customer,producer,ciudades,panels,prod,envasado,evidencias,fuentes:ps.length,ingredients,alergenos};
 }
 
 // País guardado en el móvil para un código (por ejemplo, leído de la etiqueta)
@@ -864,434 +646,6 @@ let actual = null; // {codigo, prefijo, info}
 let cacheWeb = null; // último resultado de "productos similares" para el producto actual
 const $ = id => document.getElementById(id);
 
-
-// ---------- Lectura rápida de "Fabricado en..." desde una foto ----------
-let etiquetaFabricacion = null;
-let etiquetaEnvasado = null;
-let envasadorPorEtiqueta = null;
-let ingredientesEtiqueta = null;
-
-function detectarDatosEtiqueta(texto){
-  const raw=String(texto||"");
-  const limpio=raw.replace(/\s+/g," ").trim();
-
-  const paisDeTexto=s=>{
-    const valor=String(s||"").trim();
-    const p=detectar(valor);
-    if(p && p!=="Unión Europea") return p;
-    return null;
-  };
-
-  const limpiarValor = s => String(s||"")
-    .replace(/^[\s:,\-–—.]+/,"")
-    .replace(/\s{2,}/g," ")
-    .trim();
-
-  let fabricacion=null, envasado=null, envasadorPor=null, direccion=null;
-  let etiquetado=null, ingredientes=null, ciudad=null, provincia=null, pais=null;
-
-  // FABRICACIÓN: solo se considera fabricación cuando existe lenguaje explícito.
-  const rf=[
-    /(?:fabricado|fabricada|fabricacion|fabricación)\s*(?:en|:)\s*([A-Za-zÁÉÍÓÚÜÑáéíóúüñÀ-ÿ .,'’\/-]{2,100})/i,
-    /(?:made|manufactured|produced)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .,'’\/-]{2,100})/i,
-    /(?:fabriqué|fabrique|produit)\s*(?:en|:)\s*([A-Za-zÀ-ÿ .,'’\/-]{2,100})/i,
-    /(?:prodotto|prodotta|fabbricato|fabbricata)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .,'’\/-]{2,100})/i,
-    /(?:hergestellt|produziert)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .,'’\/-]{2,100})/i
-  ];
-  for(const re of rf){
-    const m=limpio.match(re);
-    if(m){
-      const frag=limpiarValor(m[1]);
-      fabricacion={pais:paisDeTexto(frag),detalle:m[0].trim(),texto:raw,fragmento:frag};
-      break;
-    }
-  }
-
-  // ENVASADO / EMBASADO / PACKED / PACKAGED.
-  const reEnv=[
-    /(?:envasado|envasada|embasado|embasada|embalado|embalada|acondicionado|acondicionada)\s*(?:en|:)\s*([A-Za-zÀ-ÿ .,'’\/-]{2,100})/i,
-    /(?:packed|packaged)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .,'’\/-]{2,100})/i,
-    /(?:emballé|emballe|conditionné|conditionnee|conditionnée)\s*(?:en|:)\s*([A-Za-zÀ-ÿ .,'’\/-]{2,100})/i,
-    /(?:confezionato|confezionata|imballato|imballata)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .,'’\/-]{2,100})/i,
-    /(?:verpackt|abgepackt)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .,'’\/-]{2,100})/i
-  ];
-  for(const re of reEnv){
-    const m=limpio.match(re);
-    if(m){
-      const frag=limpiarValor(m[1]);
-      envasado={pais:paisDeTexto(frag),detalle:m[0].trim(),texto:raw,fragmento:frag};
-      break;
-    }
-  }
-
-  // ENVASADA/ENVASADO/EMBASADA POR: empresa + dirección.
-  const rePor=/(?:envasado|envasada|embasado|embasada|packed|packaged)\s+(?:por|by)\s+(.{2,220}?)(?=(?:\.\s*(?:finca|calle|c\/|av\.?|avenida|paseo|plaza|camino|carretera|street|road|avenue|domicilio|address)\b)|$)/i;
-  const mPor=limpio.match(rePor);
-  if(mPor){
-    envasadorPor={
-      empresa:mPor[1].trim().replace(/[.,;]+$/,""),
-      evidencia:mPor[0].trim()
-    };
-  }
-
-  // ETIQUETADO / LABELLED / LABELED.
-  const reEti=[
-    /(?:etiquetado|etiquetada|labelled|labeled)\s*(?:en|por|by|:)\s*([A-Za-zÀ-ÿ0-9 .,'’\/-]{2,160})/i
-  ];
-  for(const re of reEti){
-    const m=limpio.match(re);
-    if(m){
-      const frag=limpiarValor(m[1]);
-      etiquetado={detalle:m[0].trim(),texto:raw,fragmento:frag,pais:paisDeTexto(frag)};
-      break;
-    }
-  }
-
-  // DIRECCIÓN: calles, fincas, avenidas, etc.
-  const rd=limpio.match(/(?:calle|c\/|av\.?|avenida|paseo|plaza|camino|carretera|finca|street|road|avenue|road|domicilio|address|sede)\s+[^,;|]{2,140}(?:,\s*(?:s\/n|sn|n[º°]?\s*\d+))?/i);
-  if(rd) direccion=rd[0].trim();
-
-  // Código postal español: 5 dígitos. También ayuda a extraer provincia.
-  const cp=limpio.match(/\b(\d{5})\b/);
-  if(cp && /^[0-5]\d|[0-4]\d|5[0-2]/.test(cp[1])){
-    const n=cp[1];
-    const pfx=n.slice(0,2);
-    if(typeof PROV!=="undefined" && PROV[pfx]) provincia=PROV[pfx];
-  }
-
-  // Ciudad + provincia + país en formatos frecuentes de etiqueta:
-  // "18300 Loja (Granada), España"
-  const mLugar=limpio.match(/\b\d{5}\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñÀ-ÿ'’ .-]{2,60})\s*\(\s*([A-Za-zÁÉÍÓÚÜÑáéíóúüñÀ-ÿ'’ .-]{2,60})\s*\)\s*,?\s*([A-Za-zÀ-ÿ .'-]{2,50})?/i);
-  if(mLugar){
-    ciudad=limpiarValor(mLugar[1]);
-    provincia=limpiarValor(mLugar[2])||provincia;
-    if(mLugar[3]) pais=paisDeTexto(mLugar[3])||pais;
-  }
-
-  // Si no hay el patrón anterior, buscar país explícito al final de una dirección.
-  if(!pais){
-    const pDirec=direccion ? paisDeTexto(limpio.slice(Math.max(0,limpio.indexOf(direccion)), limpiio.length)) : null;
-    if(pDirec) pais=pDirec;
-  }
-  if(!pais) pais=paisDeTexto(limpio);
-
-  // INGREDIENTES: se guardan, pero NO se muestran hasta pulsar el botón.
-  const ri=[
-    /(?:ingredientes|ingredients|ingrédients|ingredienti|zutaten|ingrediente|ingredienser)\s*[:\-]\s*(.+?)(?=(?:\b(?:alérgenos|alergenos|allergens|allergènes|allergeni|contiene|may contain|conservación|conservacion|conservar|nutricional|información nutricional|valores nutricionales|fecha de caducidad|lote|lot|consumir|best before|use by|dirección|address)\b|$))/i
-  ];
-  for(const re of ri){
-    const m=limpio.match(re);
-    if(m){
-      const txt=limpiarValor(m[1]);
-      if(txt.length>=2) ingredientes=txt;
-      break;
-    }
-  }
-
-  // Países que aparecen en la etiqueta: son ubicaciones/pistas, NO fabricación automática.
-  const paisesEtiqueta=[];
-  const t=norm(raw);
-  for(const [pn,alias] of ALIAS){
-    if(pn==="Unión Europea") continue;
-    for(const a of alias){
-      try{
-        if(new RegExp("(^|[^a-z])"+a.replace(/[.]/g,"\\.")+"([^a-z]|$)").test(t)){
-          if(!paisesEtiqueta.includes(pn)) paisesEtiqueta.push(pn);
-          break;
-        }
-      }catch(e){}
-    }
-  }
-
-  return {
-    fabricacion,envasado,envasadorPor,direccion,etiquetado,
-    ingredientes,paisesEtiqueta,ciudad,provincia,pais,texto:raw
-  };
-}
-
-function aplicarDatosEtiqueta(info,datos){
-  if(!info || !datos) return;
-
-  if(datos.fabricacion){
-    etiquetaFabricacion=datos.fabricacion;
-    if(datos.fabricacion.pais){
-      info.prod={
-        pais:datos.fabricacion.pais,
-        nivel:"confirmado",
-        fuente:"Texto visible en la etiqueta (OCR)",
-        detalle:datos.fabricacion.detalle
-      };
-      info.evidencias=Array.isArray(info.evidencias)?info.evidencias:[];
-      info.evidencias.unshift(info.prod);
-    }
-  }
-
-  if(datos.envasado){
-    etiquetaEnvasado=datos.envasado;
-    info.envasadoEtiqueta={
-      pais:datos.envasado.pais||null,
-      nivel:datos.envasado.pais?"confirmado":"ubicación",
-      fuente:"Texto visible en la etiqueta (OCR)",
-      detalle:datos.envasado.detalle
-    };
-  }
-
-  if(datos.envasadorPor){
-    envasadorPorEtiqueta=datos.envasadorPor;
-    info.envasadorPorEtiqueta=datos.envasadorPor;
-  }
-
-  if(datos.etiquetado){
-    info.etiquetadoEtiqueta=datos.etiquetado;
-  }
-
-  if(datos.direccion) info.direccionEtiqueta=datos.direccion;
-  if(datos.ciudad) info.ciudadEtiqueta=datos.ciudad;
-  if(datos.provincia) info.provinciaEtiqueta=datos.provincia;
-  if(datos.pais) info.paisEtiqueta=datos.pais;
-
-  if(datos.ingredientes){
-    ingredientesEtiqueta=datos.ingredientes;
-    info.ingredients=datos.ingredientes;
-    info.ingredientsSource="Texto visible en la etiqueta (OCR)";
-  }
-
-  if(Array.isArray(datos.paisesEtiqueta) && datos.paisesEtiqueta.length){
-    info.paisesEtiqueta=datos.paisesEtiqueta;
-  }
-}
-
-function prepararImagenOCR(file,maxSide=1400){
-  return new Promise((resolve,reject)=>{
-    const img=new Image();
-    const url=URL.createObjectURL(file);
-    img.onload=()=>{
-      try{
-        const escala=Math.min(1,maxSide/Math.max(img.naturalWidth,img.naturalHeight));
-        const w=Math.max(1,Math.round(img.naturalWidth*escala));
-        const h=Math.max(1,Math.round(img.naturalHeight*escala));
-        const c=document.createElement("canvas");
-        c.width=w; c.height=h;
-        const ctx=c.getContext("2d",{willReadFrequently:true});
-        ctx.drawImage(img,0,0,w,h);
-
-        // Mejoramos contraste para que palabras pequeñas como
-        // "Envasado en..." sean más fáciles de reconocer.
-        const data=ctx.getImageData(0,0,w,h);
-        for(let i=0;i<data.data.length;i+=4){
-          const r=data.data[i], g=data.data[i+1], b=data.data[i+2];
-          const y=0.299*r+0.587*g+0.114*b;
-          const v=Math.max(0,Math.min(255,(y-128)*1.35+128));
-          data.data[i]=v; data.data[i+1]=v; data.data[i+2]=v;
-        }
-        ctx.putImageData(data,0,0);
-
-        URL.revokeObjectURL(url);
-        resolve(c);
-      }catch(e){ URL.revokeObjectURL(url); reject(e); }
-    };
-    img.onerror=()=>{ URL.revokeObjectURL(url); reject(new Error("No se pudo abrir la imagen")); };
-    img.src=url;
-  });
-}
-
-function actualizarOCRProgreso(p,texto){
-  const wrap=$("ocrProgreso"),bar=$("ocrBarra"),pct=$("ocrPorcentaje"),msg=$("ocrTexto");
-  if(wrap) wrap.style.display="block";
-  const n=Math.max(0,Math.min(100,Math.round((Number(p)||0)*100)));
-  if(bar) bar.style.width=n+"%";
-  if(pct) pct.textContent=n+"%";
-  if(msg && texto) msg.textContent=texto;
-}
-
-function pintarResultadoEtiquetaOCR(datos, textoOCR){
-  const box=$("resultadoEtiquetaOCR");
-  const out=$("resultadoEtiquetaOCRTexto");
-  if(!box || !out) return;
-
-  let h="";
-  if(datos.fabricacion && datos.fabricacion.pais)
-    h+="🏭 <b>Fabricado en:</b> "+esc(datos.fabricacion.pais)+"<br>";
-  else if(datos.fabricacion)
-    h+="🏭 <b>Fabricación:</b> "+esc(datos.fabricacion.detalle)+"<br>";
-
-  if(datos.envasado){
-    h+="📦 <b>Envasado"+(datos.envasado.pais?" en":"")+":</b> "+esc(datos.envasado.pais||datos.envasado.detalle)+"<br>";
-  }
-  if(datos.envasadorPor)
-    h+="🏢 <b>Envasado por:</b> "+esc(datos.envasadorPor.empresa)+"<br>";
-
-  if(datos.etiquetado)
-    h+="🏷️ <b>Etiquetado:</b> "+esc(datos.etiquetado.fragmento||datos.etiquetado.detalle)+"<br>";
-
-  if(datos.direccion)
-    h+="📍 <b>Dirección:</b> "+esc(datos.direccion)+"<br>";
-  if(datos.ciudad)
-    h+="🏙️ <b>Ciudad:</b> "+esc(datos.ciudad)+"<br>";
-  if(datos.provincia)
-    h+="📌 <b>Provincia:</b> "+esc(datos.provincia)+"<br>";
-  if(datos.pais)
-    h+="🌍 <b>País:</b> "+esc(datos.pais)+"<br>";
-
-  if(datos.paisesEtiqueta && datos.paisesEtiqueta.length)
-    h+="🌐 <b>Países mencionados en la etiqueta:</b> "+datos.paisesEtiqueta.map(esc).join(", ")+"<br>";
-
-  if(datos.ingredientes)
-    h+="🧪 <b>Ingredientes detectados:</b> disponibles en el botón «¿Quieres saber los ingredientes?»";
-
-  if(!h) h="⚪ No encontré datos claros de fabricación, envasado, etiquetado, dirección o ingredientes.";
-  out.innerHTML=h;
-  box.style.display="block";
-}
-
-function crearVariantesOCR(file){
-  return new Promise((resolve,reject)=>{
-    const img=new Image();
-    img.onload=()=>{
-      const variantes=[];
-      const baseW=Math.min(1800,Math.max(1000,img.naturalWidth||img.width));
-      const scale=baseW/(img.naturalWidth||img.width);
-      const w=Math.round((img.naturalWidth||img.width)*scale);
-      const h=Math.round((img.naturalHeight||img.height)*scale);
-
-      // La foto de prueba está girada 90°. Probamos automáticamente 0/90/180/270.
-      [0,90,180,270].forEach(grados=>{
-        const rot=(grados===90||grados===270);
-        const c=document.createElement("canvas");
-        c.width=rot?h:w; c.height=rot?w:h;
-        const x=c.getContext("2d",{willReadFrequently:true});
-        x.imageSmoothingEnabled=true;
-        x.imageSmoothingQuality="high";
-        x.save();
-        x.translate(c.width/2,c.height/2);
-        x.rotate(grados*Math.PI/180);
-        x.drawImage(img,-w/2,-h/2,w,h);
-        x.restore();
-
-        // Variante original mejorada.
-        variantes.push({canvas:c,angulo:grados,nombre:"normal"});
-
-        // Variante en escala de grises + contraste alto, útil para letras pequeñas.
-        const d=x.getImageData(0,0,c.width,c.height);
-        const p=d.data;
-        for(let i=0;i<p.length;i+=4){
-          const g=0.299*p[i]+0.587*p[i+1]+0.114*p[i+2];
-          // Contraste suave, sin destruir caracteres finos.
-          const v=Math.max(0,Math.min(255,(g-128)*1.65+128));
-          p[i]=p[i+1]=p[i+2]=v;
-        }
-        x.putImageData(d,0,0);
-        variantes.push({canvas:c,angulo:grados,nombre:"contraste"});
-      });
-      resolve(variantes);
-    };
-    img.onerror=reject;
-    img.src=URL.createObjectURL(file);
-  });
-}
-
-async function ocrMejorVariante(file){
-  if(typeof Tesseract==="undefined") throw new Error("OCR no disponible");
-
-  const variantes=await crearVariantesOCR(file);
-  let mejor=null;
-
-  for(let i=0;i<variantes.length;i++){
-    const v=variantes[i];
-    const result=await Tesseract.recognize(v.canvas,"spa+eng",{
-      logger:m=>{
-        if(m.status==="recognizing text" && typeof m.progress==="number"){
-          // Reservamos el 15%-90% para las diferentes orientaciones.
-          const base=0.15+(i/variantes.length)*0.75;
-          actualizarOCRProgreso(base+m.progress*(0.75/variantes.length),"📖 Probando orientación y contraste...");
-        }
-      }
-    });
-
-    const texto=result&&result.data?String(result.data.text||""):"";
-    const confianza=Number(result&&result.data&&result.data.confidence||0);
-
-    // Damos más peso a palabras que realmente nos interesan.
-    const n=norm(texto);
-    const claves=[
-      "fabricado","fabricada","fabricacion","made in","manufactured","produced",
-      "envasado","envasada","embasado","embasada","packed","packaged",
-      "importado","importada","imported","etiquetado","etiquetada",
-      "ingredientes","ingredients","calle","avenida","finca","domicilio",
-      "address","china","spain","espana","mercadona","harbin"
-    ];
-    let puntos=0;
-    for(const k of claves) if(n.includes(norm(k))) puntos+=12;
-    puntos += Math.min(40,texto.length/25);
-    puntos += confianza*0.35;
-
-    if(!mejor || puntos>mejor.puntos){
-      mejor={texto,confianza,puntos,angulo:v.angulo,nombre:v.nombre};
-    }
-  }
-
-  return mejor;
-}
-
-async function analizarFotoEtiqueta(file){
-  if(!file) return;
-
-  actualizarOCRProgreso(0,"📷 Preparando y corrigiendo la orientación...");
-  const btn=$("fotoEtiquetaBtn");
-  if(btn){ btn.disabled=true; btn.textContent="📖 Leyendo etiqueta..."; }
-
-  try{
-    actualizarOCRProgreso(0.05,"🔄 Corrigiendo automáticamente la orientación...");
-    const mejor=await ocrMejorVariante(file);
-
-    actualizarOCRProgreso(0.94,"🔍 Analizando fabricación, importador, dirección e ingredientes...");
-    const texto=mejor.texto;
-    const datos=detectarDatosEtiqueta(texto);
-
-    etiquetaFabricacion=datos.fabricacion||null;
-    etiquetaEnvasado=datos.envasado||null;
-    envasadorPorEtiqueta=datos.envasadorPor||null;
-    ingredientesEtiqueta=datos.ingredientes||null;
-
-    pintarResultadoEtiquetaOCR(datos,texto);
-
-    if(actual && actual.info){
-      aplicarDatosEtiqueta(actual.info,datos);
-      pintar(true);
-    }
-
-    const mensajes=[];
-    if(datos.fabricacion && datos.fabricacion.pais) mensajes.push("Fabricado en "+datos.fabricacion.pais);
-    if(datos.envasado && datos.envasado.pais) mensajes.push("Envasado en "+datos.envasado.pais);
-    if(datos.envasadorPor) mensajes.push("Envasado por "+datos.envasadorPor.empresa);
-    if(datos.etiquetado) mensajes.push("Etiquetado detectado");
-    if(datos.direccion) mensajes.push("Dirección detectada");
-    if(datos.ciudad) mensajes.push("Ciudad detectada");
-    if(datos.ingredientes) mensajes.push("Ingredientes detectados");
-
-    actualizarOCRProgreso(1, mensajes.length ? "✅ "+mensajes.join(" · ") : "⚪ No encontré datos claros.");
-
-    if(datos.ingredientes && actual && actual.info){
-      const bi=$("verIngredientes");
-      if(bi){
-        bi.style.display="block";
-        bi.textContent="🧪 ¿Quieres saber los ingredientes?";
-      }
-    }
-
-    const voz=[];
-    if(datos.fabricacion && datos.fabricacion.pais) voz.push("Fabricado en "+datos.fabricacion.pais);
-    if(datos.envasado && datos.envasado.pais) voz.push("Envasado en "+datos.envasado.pais);
-    if(datos.envasadorPor) voz.push("Envasado por "+datos.envasadorPor.empresa);
-    if(voz.length) hablar(voz.join(". ")+".");
-  }catch(err){
-    console.error(err);
-    actualizarOCRProgreso(1,"⚠️ No pude leer la etiqueta. Prueba acercando la cámara y evitando reflejos.");
-  }finally{
-    if(btn){ btn.disabled=false; btn.textContent="📸 Leer etiqueta: ¿Dónde está fabricado?"; }
-  }
-}
-
 async function mostrar(codigo){
   const gs1Raw=String(codigo||"");
   const gs1=extraerGS1(gs1Raw);
@@ -1299,14 +653,10 @@ async function mostrar(codigo){
   const prefijo = paisDe(codigoProducto);
   const cuadro = $("resultado"); cuadro.style.display="block"; cuadro.className=""; actual=null;
   $("codigo").textContent="Código: "+codigo;
-  $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("envasadoEn").textContent=""; $("gs1Datos").innerHTML=""; $("buscaMsg").textContent=""; $("webResultados").innerHTML=""; $("webResultados").style.display=""; $("buscaWeb").style.display="none"; $("buscaWeb").textContent="🔎 Buscar dónde se fabrica"; cacheWeb=null;
-  if($("resultadoEtiquetaOCR")) $("resultadoEtiquetaOCR").style.display="none";
-  if($("ocrProgreso")) $("ocrProgreso").style.display="none";
-  if($("verIngredientes")){ $("verIngredientes").style.display="none"; $("verIngredientes").textContent="🧪 ¿Quieres saber los ingredientes?"; }
-  if($("ingredientesBox")){ $("ingredientesBox").style.display="none"; $("ingredientesBox").innerHTML=""; }
+  $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("gs1Datos").innerHTML=""; $("buscaMsg").textContent=""; $("webResultados").innerHTML=""; $("webResultados").style.display=""; $("buscaWeb").style.display="none"; $("buscaWeb").textContent="🔎 Buscar dónde se fabrica"; cacheWeb=null;
   if(!prefijo){ $("pais").textContent="Código no válido"; hablar("Código no válido"); return; }
   $("pais").textContent="🔎 Consultando información del producto...";
-  const info=await buscarProducto(codigoProducto); aplicarDatosEtiqueta(info,{fabricacion:etiquetaFabricacion,envasado:etiquetaEnvasado,envasadorPor:envasadorPorEtiqueta,ingredientes:ingredientesEtiqueta}); actual={codigo:codigoProducto,prefijo,info,gs1Raw}; pintar();
+  const info=await buscarProducto(codigoProducto); actual={codigo:codigoProducto,prefijo,info,gs1Raw}; pintar();
 }
 
 
@@ -1393,28 +743,7 @@ function pintar(silencio){
     $("fabricadoEn").textContent="⚪ Fabricación: no disponible";
   }
   if(info.fab) html+="<br>📍 <b>Lugar registrado:</b> "+esc(info.fab);
-  if(info.envasadorPorEtiqueta){
-    html+="<br>🟢 📦 <b>Envasado por: "+esc(info.envasadorPorEtiqueta.empresa)+"</b>";
-    if(info.direccionEtiqueta) html+="<br>📍 <b>Ubicación indicada en la etiqueta:</b> "+esc(info.direccionEtiqueta);
-    html+="<br><small>📌 Evidencia: "+esc(info.envasadorPorEtiqueta.evidencia)+"</small>";
-    if(info.envasadoEtiqueta){
-      html+="<br>🟢 <b>Envasado en: "+esc(info.envasadoEtiqueta.pais)+"</b> <small>(país indicado por la etiqueta)</small>";
-    }
-    $("envasadoEn").textContent="🟢 Envasado por "+info.envasadorPorEtiqueta.empresa;
-  }else if(info.envasadoEtiqueta){
-    html+="<br>🟢 📦 <b>Envasado en: "+esc(info.envasadoEtiqueta.pais)+"</b> <small>(Texto visible en la etiqueta)</small>";
-    if(info.envasadoEtiqueta.detalle) html+="<br><small>📌 Evidencia de envasado: "+esc(info.envasadoEtiqueta.detalle)+"</small>";
-    if(info.direccionEtiqueta) html+="<br>📍 <b>Dirección/establecimiento de la etiqueta:</b> "+esc(info.direccionEtiqueta);
-    $("envasadoEn").textContent="🟢 Envasado en "+info.envasadoEtiqueta.pais;
-  }else if(info.envasado){
-    html+="<br>📦 <b>País asociado al envasador:</b> "+esc(info.envasado.pais)+" <small>(dato asociado; no demuestra por sí solo la fabricación)</small>";
-    $("envasadoEn").textContent="🟡 Establecimiento/envasador asociado: "+info.envasado.pais;
-  }else{
-    $("envasadoEn").textContent="⚪ Envasado: no disponible";
-  }
-  if(Array.isArray(info.paisesEtiqueta) && info.paisesEtiqueta.length){
-    html+="<br>🌍 <b>Países detectados en la etiqueta:</b> "+esc(info.paisesEtiqueta.join(", "));
-  }
+  if(info.envasado) html+="<br>📦 <b>País asociado al envasador:</b> "+esc(info.envasado.pais)+" <small>(dato asociado; no demuestra por sí solo la fabricación)</small>";
   if(info.packaging) html+="<br>📦 <b>Envase:</b> "+esc(info.packaging);
   if(info.emb) html+="<br>🔎 <b>Código de trazabilidad:</b> "+esc(info.emb);
   if(info.customer) html+="<br>🏢 <b>Datos de empresa:</b> "+esc(info.customer);
@@ -1428,24 +757,14 @@ function pintar(silencio){
   $("buscaWeb").style.display=tieneFabricacion?"none":"block";
   const btnIng=$("verIngredientes"), boxIng=$("ingredientesBox");
   if(btnIng){
-    const tieneIngredientes=!!(info.ingredients && String(info.ingredients).trim());
-    btnIng.style.display=tieneIngredientes?"block":"none";
+    btnIng.style.display=info.ingredients?"block":"none";
     btnIng.textContent="🧪 ¿Quieres saber los ingredientes?";
   }
   if(boxIng){ boxIng.style.display="none"; boxIng.innerHTML=""; }
   if(!silencio){ if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia(); }
   const detalle=tieneFabricacion?(info.prod.nivel==="confirmado"?"El producto tiene un dato de fabricación declarado en "+paisFab:(info.prod.voz||"Hay una evidencia asociada a un establecimiento en "+paisFab+", pero no demuestra por sí sola la fabricación")):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no hay una evidencia pública suficiente para confirmar dónde se fabricó.";
   hablar((frase?frase+" ":"")+detalle);
-  if(!reabriendoHistorial){
-    guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1");
-  }
-  if(!silencio && !reabriendoHistorial && paisPrefijo==="España"){
-    const ref=cuadro;
-    clearTimeout(window._lqddCompactTimer);
-    window._lqddCompactTimer=setTimeout(()=>{
-      if(ref && ref.style.display!=="none") ref.classList.add("compacto");
-    },3600);
-  }
+  guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1");
 }
 
 if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
@@ -1486,45 +805,6 @@ async function iniciar(){
   }
 }
 
-
-const tarjetaResultado = document.getElementById("resultado");
-if(tarjetaResultado){
-  tarjetaResultado.addEventListener("click",()=>{
-    if(!tarjetaResultado.classList.contains("compacto")) return;
-    tarjetaResultado.classList.remove("compacto");
-    if(typeof actual!=="undefined" && actual){
-      const pais=(actual.prefijo==="España / Andorra"?"España":actual.prefijo);
-      hablar((pais==="España"?"¡Viva España! ":"")+textoCompletoHistorial({datos:actual}));
-    }
-  });
-}
-
-const toggleHist = document.getElementById("toggleHist");
-const histWrap = document.getElementById("histWrap");
-if(toggleHist && histWrap){
-  const histOculto = localStorage.getItem("histOculto") !== "0";
-  histWrap.style.display = histOculto ? "none" : "block";
-  toggleHist.textContent = histOculto ? "👁️ Mostrar historial" : "🙈 Ocultar historial";
-
-  toggleHist.onclick = () => {
-    const oculto = histWrap.style.display === "none";
-    histWrap.style.display = oculto ? "block" : "none";
-    localStorage.setItem("histOculto", oculto ? "0" : "1");
-    toggleHist.textContent = oculto ? "🙈 Ocultar historial" : "👁️ Mostrar historial";
-  };
-}
-
-const fotoEtiquetaBtn = document.getElementById("fotoEtiquetaBtn");
-const fotoEtiqueta = document.getElementById("fotoEtiqueta");
-if(fotoEtiquetaBtn && fotoEtiqueta){
-  fotoEtiquetaBtn.onclick = () => fotoEtiqueta.click();
-  fotoEtiqueta.onchange = async () => {
-    const file = fotoEtiqueta.files && fotoEtiqueta.files[0];
-    if(file) await analizarFotoEtiqueta(file);
-    fotoEtiqueta.value="";
-  };
-}
-
 const vozBtn = document.getElementById("vozBtn");
 if(vozBtn){
   actualizarBotonVoz();
@@ -1541,12 +821,6 @@ if(vozBtn){
 btn.onclick = () => activo ? parar() : iniciar();
 window.addEventListener("load", iniciar);
 document.getElementById("ok").onclick = () => mostrar(document.getElementById("manual").value);
-const ocultarOCR = document.getElementById("ocultarOCR");
-if(ocultarOCR) ocultarOCR.onclick=()=>{ const x=$("ocrProgreso"); if(x) x.style.display="none"; };
-
-const ocultarResultadoOCR = document.getElementById("ocultarResultadoOCR");
-if(ocultarResultadoOCR) ocultarResultadoOCR.onclick=()=>{ const x=$("resultadoEtiquetaOCR"); if(x) x.style.display="none"; };
-
 const verIngredientesBtn = document.getElementById("verIngredientes");
 if(verIngredientesBtn){
   verIngredientesBtn.onclick = () => {
@@ -1558,17 +832,12 @@ if(verIngredientesBtn){
       box.innerHTML = "";
       btn.textContent = "🧪 ¿Quieres saber los ingredientes?";
     } else {
-      let html = "<b>🧪 Ingredientes:</b><br>" + esc(info.ingredients);
-      if(info.alergenos) html += "<br><br>⚠️ <b>Alérgenos:</b> " + esc(info.alergenos);
-      if(info.ingredientsSource) html += "<br><br><small>📚 Fuente: " + esc(info.ingredientsSource) + "</small>";
+      let html = "🧪 <b>Ingredientes:</b> " + esc(info.ingredients);
+      if(info.alergenos) html += "<br>⚠️ <b>Alérgenos:</b> " + esc(info.alergenos);
       box.innerHTML = html;
       box.style.display = "block";
       btn.textContent = "🙈 Ocultar ingredientes";
-      if(info.ingredients){
-        hablar("Los ingredientes son: " + info.ingredients + (info.alergenos ? ". Contiene alérgenos: " + info.alergenos : ""));
-      }else{
-        hablar("No hay información de ingredientes disponible para este producto.");
-      }
+      hablar("Los ingredientes son: " + info.ingredients + (info.alergenos ? ". Contiene alérgenos: " + info.alergenos : ""));
     }
   };
 }
@@ -1608,5 +877,261 @@ document.getElementById("buscaWeb").onclick = async () => {
   }
 };
 </script>
+
+<!-- LQDD: librería OCR aislada. No modifica el escáner de códigos existente. -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  const E = id => document.getElementById(id);
+  const normL = t => String(t||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+  const escL = s => String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+  const paisesL = [
+    ["España",["espana","spain","espagne","spanien"]],
+    ["Portugal",["portugal"]],["Francia",["francia","france"]],
+    ["Alemania",["alemania","germany","deutschland"]],
+    ["Italia",["italia","italy","italie"]],["Marruecos",["marruecos","morocco","maroc"]],
+    ["China",["china","prc","p.r.c"]],["India",["india"]],["Turquía",["turquia","turkey","turkiye"]],
+    ["Reino Unido",["reino unido","united kingdom","great britain","inglaterra","england"]],
+    ["Países Bajos",["paises bajos","netherlands","holland","holanda"]],
+    ["Bélgica",["belgica","belgium"]],["Polonia",["polonia","poland"]],
+    ["Estados Unidos",["estados unidos","united states","usa","u.s.a"]],
+    ["México",["mexico"]],["Argentina",["argentina"]],["Brasil",["brasil","brazil"]],
+    ["Chile",["chile"]],["Colombia",["colombia"]],["Perú",["peru"]],
+    ["Japón",["japon","japan"]],["Tailandia",["tailandia","thailand"]],
+    ["Vietnam",["vietnam"]],["Suiza",["suiza","switzerland"]],
+    ["Austria",["austria"]],["Dinamarca",["dinamarca","denmark"]],
+    ["Suecia",["suecia","sweden"]],["Grecia",["grecia","greece"]],
+    ["Rumanía",["rumania","romania"]],["Hungría",["hungria","hungary"]],
+    ["Egipto",["egipto","egypt"]],["Indonesia",["indonesia"]],
+    ["Corea del Sur",["corea del sur","south korea"]],["Rusia",["rusia","russia"]],
+    ["Ucrania",["ucrania","ukraine"]],["Bulgaria",["bulgaria"]],
+    ["Croacia",["croacia","croatia"]],["Eslovenia",["eslovenia","slovenia"]],
+    ["Eslovaquia",["eslovaquia","slovakia"]],["Chequia",["chequia","czechia","czech republic"]],
+    ["Serbia",["serbia"]],["Finlandia",["finlandia","finland"]],
+    ["Noruega",["noruega","norway"]],["Canadá",["canada"]],
+    ["Australia",["australia"]],["Nueva Zelanda",["nueva zelanda","new zealand"]],
+    ["Sudáfrica",["sudafrica","south africa"]],["Túnez",["tunez","tunisia"]],
+    ["Argelia",["argelia","algeria"]],["Kenia",["kenia","kenya"]],
+    ["Ghana",["ghana"]],["Etiopía",["etiopia","ethiopia"]],
+    ["Israel",["israel"]],["Líbano",["libano","lebanon"]],
+    ["Jordania",["jordania","jordan"]],["Irán",["iran"]],
+    ["Arabia Saudí",["arabia saudi","saudi arabia"]],
+    ["Emiratos Árabes Unidos",["emiratos arabes","united arab emirates","uae"]],
+    ["Taiwán",["taiwan"]],["Hong Kong",["hong kong"]],
+    ["Filipinas",["filipinas","philippines"]],["Malasia",["malasia","malaysia"]],
+    ["Singapur",["singapur","singapore"]],["Camboya",["camboya","cambodia"]],
+    ["Myanmar",["myanmar","birmania"]],["Bangladesh",["bangladesh"]],
+    ["Pakistán",["pakistan"]],["Sri Lanka",["sri lanka"]],["Nepal",["nepal"]],
+    ["Uruguay",["uruguay"]],["Paraguay",["paraguay"]],["Bolivia",["bolivia"]],
+    ["Ecuador",["ecuador"]],["Venezuela",["venezuela"]],["Cuba",["cuba"]],
+    ["República Dominicana",["republica dominicana","dominican republic"]],
+    ["Costa Rica",["costa rica"]],["Panamá",["panama"]],
+    ["Guatemala",["guatemala"]],["El Salvador",["el salvador"]],
+    ["Honduras",["honduras"]],["Nicaragua",["nicaragua"]]
+  ];
+
+  function detectarPaisL(texto){
+    const t=normL(texto);
+    let mejor=null,pos=Infinity;
+    for(const [pais,aliases] of paisesL){
+      for(const a of aliases){
+        const i=t.indexOf(a);
+        if(i>=0 && i<pos){pos=i;mejor=pais;}
+      }
+    }
+    return mejor;
+  }
+
+  function limpiarOCR(t){
+    return String(t||"")
+      .replace(/\r/g,"\n")
+      .replace(/[ \t]+/g," ")
+      .replace(/\n{3,}/g,"\n\n")
+      .trim();
+  }
+
+  function lineaDespues(text, regex){
+    const lines=limpiarOCR(text).split("\n").map(x=>x.trim()).filter(Boolean);
+    for(let i=0;i<lines.length;i++){
+      const m=lines[i].match(regex);
+      if(m){
+        const resto=(m[1]||"").trim().replace(/^[:\-–—]\s*/,"");
+        if(resto) return resto;
+        if(lines[i+1]) return lines[i+1].trim();
+      }
+    }
+    return "";
+  }
+
+  function extraerEtiquetaL(text){
+    const raw=limpiarOCR(text);
+    const n=normL(raw);
+    const r={fabricadoEn:"",fabricante:"",envasadoEn:"",envasadoPor:"",
+      importadoPor:"",procesado:"",distribuidoPor:"",etiquetadoPor:"",
+      acondicionadoPor:"",origen:"",direccion:"",ciudad:"",provincia:"",
+      pais:"",ingredientes:"",alergenos:"",raw};
+
+    r.fabricadoEn=lineaDespues(raw,/(?:fabricad[oa]|manufactured|made in|produced|producid[oa])\s+(?:en|in|at)?\s*(.*)$/i);
+    if(!r.fabricadoEn){
+      const m=raw.match(/(?:fabricad[oa]|manufactured|made in|produced|producid[oa])\s+(?:en|in|at)?\s*([^\n,.]+)/i);
+      if(m) r.fabricadoEn=m[1].trim();
+    }
+
+    r.fabricante=lineaDespues(raw,/(?:fabricad[oa]\s+por|manufactured by|made by|produced by)\s*:?\s*(.*)$/i);
+    r.envasadoEn=lineaDespues(raw,/(?:envasad[oa]|embasad[oa]|packed|packaged)\s+(?:en|in)\s*:?\s*(.*)$/i);
+    r.envasadoPor=lineaDespues(raw,/(?:envasad[oa]|embasad[oa])\s+por|packed by|packaged by\s*:?\s*(.*)$/i);
+    r.importadoPor=lineaDespues(raw,/(?:importad[oa]\s+por|imported by)\s*:?\s*(.*)$/i);
+    r.procesado=lineaDespues(raw,/(?:procesad[oa]|processed)\s+(?:en|in|por|by)?\s*:?\s*(.*)$/i);
+    r.distribuidoPor=lineaDespues(raw,/(?:distribuid[oa]\s+por|distributed by)\s*:?\s*(.*)$/i);
+    r.etiquetadoPor=lineaDespues(raw,/(?:etiquetad[oa]\s+por|labelled by|labeled by)\s*:?\s*(.*)$/i);
+    r.acondicionadoPor=lineaDespues(raw,/(?:acondicionad[oa]\s+por|conditioned by)\s*:?\s*(.*)$/i);
+    r.origen=lineaDespues(raw,/(?:pais de origen|country of origin|product of)\s*:?\s*(.*)$/i);
+
+    const ingMatch=raw.match(/(?:ingredientes|ingredients|ingrédients|ingredienti|zutaten)\s*:?\s*([\s\S]*?)(?=\n\s*(?:al[eé]rgenos|allergens|allerg[eè]nes|may contain|puede contener|conservaci[oó]n|nutrition|informaci[oó]n nutricional)\b|$)/i);
+    if(ingMatch) r.ingredientes=ingMatch[1].replace(/\s+/g," ").trim();
+
+    const alMatch=raw.match(/(?:al[eé]rgenos|allergens|allerg[eè]nes|may contain|puede contener)\s*:?\s*([\s\S]*?)(?=\n\s*(?:conservaci[oó]n|nutrition|informaci[oó]n nutricional)\b|$)/i);
+    if(alMatch) r.alergenos=alMatch[1].replace(/\s+/g," ").trim();
+
+    // Dirección: solo se interpreta como dirección, nunca como prueba de fabricación.
+    const addr=/((?:c\/|c\.|calle|avenida|av\.|paseo|plaza|camino|carretera|finca|street|road|avenue)\s+[^\n]+)/i.exec(raw);
+    if(addr) r.direccion=addr[1].trim();
+
+    // Código postal español + ciudad + provincia entre paréntesis.
+    const cp=/\b(\d{5})\s+([^,\n(]+?)(?:\s*\(([^)\n]+)\))?(?:,\s*([A-Za-zÁÉÍÓÚáéíóúÑñ ]+))?(?=\s*$|\n)/i.exec(raw);
+    if(cp){
+      r.ciudad=(cp[2]||"").trim();
+      r.provincia=(cp[3]||"").trim();
+      if(!r.pais) r.pais=detectarPaisL(raw);
+    }
+
+    // Si hay una declaración explícita, el país de fabricación/envasado se extrae de esa declaración.
+    if(r.fabricadoEn) r.fabricadoEn=detectarPaisL(r.fabricadoEn)||r.fabricadoEn;
+    if(r.envasadoEn) r.envasadoEn=detectarPaisL(r.envasadoEn)||r.envasadoEn;
+    if(!r.origen) r.origen=detectarPaisL(raw)||"";
+    r.pais=detectarPaisL(raw)||r.pais;
+
+    return r;
+  }
+
+  function renderEtiquetaL(r){
+    const filas=[];
+    const add=(label,val,icon)=>{if(val)filas.push("<div style='margin:5px 0'>"+icon+" <b>"+label+":</b> "+escL(val)+"</div>");};
+    add("Fabricado en",r.fabricadoEn,"🏭");
+    add("Fabricante",r.fabricante,"🏢");
+    add("Envasado en",r.envasadoEn,"📦");
+    add("Envasado por",r.envasadoPor,"📦");
+    add("Importado por",r.importadoPor,"🚚");
+    add("Procesado",r.procesado,"⚙️");
+    add("Distribuido por",r.distribuidoPor,"🚛");
+    add("Etiquetado por",r.etiquetadoPor,"🏷️");
+    add("Acondicionado por",r.acondicionadoPor,"🔧");
+    add("Origen declarado",r.origen,"🌍");
+    add("Dirección",r.direccion,"📍");
+    add("Ciudad",r.ciudad,"🏙️");
+    add("Provincia",r.provincia,"🗺️");
+    add("País detectado",r.pais,"🌐");
+    E("lqddTextoEtiqueta").innerHTML=filas.length?filas.join(""):"<small>No he encontrado una declaración clara en la etiqueta. Puedes hacer otra foto más cercana y con buena luz.</small>";
+
+    const ib=E("lqddIngredientesEtiqueta"), bx=E("lqddIngredientesBox");
+    ib.style.display=r.ingredientes?"block":"none";
+    bx.style.display="none"; bx.innerHTML="";
+    ib.textContent="🧪 ¿Quieres saber los ingredientes?";
+    ib.onclick=function(){
+      if(bx.style.display!=="none"){bx.style.display="none";ib.textContent="🧪 ¿Quieres saber los ingredientes?";return;}
+      let h="<b>🧪 Ingredientes:</b> "+escL(r.ingredientes);
+      if(r.alergenos) h+="<br><br>⚠️ <b>Alérgenos:</b> "+escL(r.alergenos);
+      bx.innerHTML=h;bx.style.display="block";ib.textContent="🙈 Ocultar ingredientes";
+      if(typeof hablar==="function") hablar("Los ingredientes son: "+r.ingredientes+(r.alergenos?". Alérgenos: "+r.alergenos:""));
+    };
+  }
+
+  async function leerEtiquetaL(file){
+    const estado=E("lqddEstadoEtiqueta"), barra=E("lqddBarraEtiqueta"), pct=E("lqddPorcentajeEtiqueta"), res=E("lqddResultadoEtiqueta");
+    estado.style.display="block";res.style.display="none";barra.style.width="2%";pct.textContent="2%";
+    try{
+      if(!window.Tesseract) throw new Error("OCR no disponible");
+      const worker=await Tesseract.createWorker("spa+eng+fra+ita+deu",1,{logger:m=>{
+        if(m && typeof m.progress==="number"){
+          const p=Math.max(2,Math.min(100,Math.round(m.progress*100)));
+          barra.style.width=p+"%";pct.textContent=p+"%";
+        }
+      }});
+      const ret=await worker.recognize(file);
+      await worker.terminate();
+      barra.style.width="100%";pct.textContent="100%";
+      const datos=extraerEtiquetaL(ret.data&&ret.data.text||"");
+      renderEtiquetaL(datos);
+      res.style.display="block";
+      setTimeout(()=>{estado.style.display="none";},500);
+    }catch(e){
+      barra.style.width="100%";pct.textContent="Error";
+      E("lqddTextoEtiqueta").innerHTML="<b>⚠️ No se pudo leer la etiqueta.</b><br><small>Haz una foto nítida, de cerca y con buena iluminación.</small>";
+      res.style.display="block";
+      setTimeout(()=>{estado.style.display="none";},700);
+    }
+  }
+
+  E("lqddBtnEtiqueta").onclick=()=>E("lqddFotoEtiqueta").click();
+  E("lqddFotoEtiqueta").onchange=ev=>{
+    const f=ev.target.files&&ev.target.files[0];
+    if(f) leerEtiquetaL(f);
+    ev.target.value="";
+  };
+  E("lqddCerrarEtiqueta").onclick=()=>{
+    E("lqddResultadoEtiqueta").style.display="none";
+    E("lqddEstadoEtiqueta").style.display="none";
+    E("lqddTextoEtiqueta").innerHTML="";
+    E("lqddIngredientesBox").innerHTML="";
+    E("lqddIngredientesBox").style.display="none";
+  };
+
+  // Historial ampliado, aislado: guarda una copia de 'actual' y permite reabrirla.
+  try{
+    const guardarOriginalL=guardar;
+    guardar=function(codigo,pais,fab){
+      try{
+        if(window.actual && actual.codigo===codigo){
+          localStorage.setItem("lqdd_info_"+codigo,JSON.stringify(actual));
+        }
+      }catch(e){}
+      guardarOriginalL(codigo,pais,fab);
+      setTimeout(()=>{
+        try{
+          const items=document.querySelectorAll("#hist .item");
+          if(items[0]){
+            items[0].style.transition="all .4s";
+            items[0].style.fontSize=".82rem";
+            items[0].style.padding="7px 10px";
+            items[0].title="Toca para volver a abrir la información";
+            items[0].style.cursor="pointer";
+            items[0].onclick=()=>{ mostrar(codigo); };
+          }
+        }catch(e){}
+      },250);
+    };
+  }catch(e){}
+
+  // También hace clicables los elementos que ya estaban guardados antes de instalar esta versión.
+  try{
+    const pintarHistOriginalL=pintarHist;
+    pintarHist=function(){
+      pintarHistOriginalL();
+      const h=cargarHist();
+      document.querySelectorAll("#hist .item").forEach((el,i)=>{
+        const x=h[i]; if(!x)return;
+        el.style.cursor="pointer";
+        el.title="Toca para volver a abrir la información";
+        el.onclick=()=>{ try{ mostrar(x.codigo); }catch(e){} };
+      });
+    };
+    pintarHist();
+  }catch(e){}
+})();
+</script>
+
 </body>
 </html>
