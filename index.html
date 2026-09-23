@@ -620,6 +620,7 @@ function pintarResultadosWeb(r){
 }
 
 let actual = null; // {codigo, prefijo, info}
+let cacheWeb = null; // último resultado de "productos similares" para el producto actual
 const $ = id => document.getElementById(id);
 
 async function mostrar(codigo){
@@ -629,7 +630,7 @@ async function mostrar(codigo){
   const prefijo = paisDe(codigoProducto);
   const cuadro = $("resultado"); cuadro.style.display="block"; cuadro.className=""; actual=null;
   $("codigo").textContent="Código: "+codigo;
-  $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("gs1Datos").innerHTML=""; $("buscaMsg").textContent=""; $("webResultados").innerHTML=""; $("buscaWeb").style.display="none";
+  $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("gs1Datos").innerHTML=""; $("buscaMsg").textContent=""; $("webResultados").innerHTML=""; $("webResultados").style.display=""; $("buscaWeb").style.display="none"; $("buscaWeb").textContent="🔎 Buscar dónde se fabrica"; cacheWeb=null;
   if(!prefijo){ $("pais").textContent="Código no válido"; hablar("Código no válido"); return; }
   $("pais").textContent="🔎 Consultando información del producto...";
   const info=await buscarProducto(codigoProducto); actual={codigo:codigoProducto,prefijo,info,gs1Raw}; pintar();
@@ -819,16 +820,33 @@ if(verIngredientesBtn){
 }
 document.getElementById("buscaWeb").onclick = async () => {
   if(!actual) return;
-  const b=$("buscaWeb"), msg=$("buscaMsg");
+  const b=$("buscaWeb"), msg=$("buscaMsg"), box=$("webResultados");
+  const abierto = box.style.display!=="none" && box.innerHTML.trim()!=="";
+  if(abierto){
+    box.style.display="none"; msg.textContent="";
+    b.textContent="🔎 Buscar dónde se fabrica";
+    return;
+  }
+  if(cacheWeb){
+    box.style.display="block";
+    pintarResultadosWeb(cacheWeb);
+    msg.textContent="✅ He encontrado "+cacheWeb.resultados.length+" productos similares de distintas marcas.";
+    b.textContent="🙈 Ocultar productos similares";
+    return;
+  }
   b.disabled=true; b.textContent="🔎 Buscando en la web..."; msg.textContent="";
   let r=null;
   try{ r=await buscarEnWeb(actual); }catch(e){ r={error:"fallo"}; }
-  b.disabled=false; b.textContent="🔎 Buscar dónde se fabrica";
+  b.disabled=false;
   if(r && r.resultados){
+    cacheWeb=r;
+    box.style.display="block";
     pintarResultadosWeb(r);
     msg.textContent="✅ He encontrado "+r.resultados.length+" productos similares de distintas marcas.";
     hablar(r.voz||"He encontrado productos similares de distintas marcas.");
+    b.textContent="🙈 Ocultar productos similares";
   }else{
+    b.textContent="🔎 Buscar dónde se fabrica";
     const m={"sin-datos":"No hay marca ni nombre suficiente para realizar la búsqueda.",
              "sin-parecidos":"No encontré productos similares en las bases abiertas.",
              "fallo":"No pude completar la búsqueda. Comprueba tu conexión."};
