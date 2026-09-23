@@ -39,9 +39,15 @@
 <div id="lector"></div>
 <div id="estadoEscaneo" style="margin:8px 0;text-align:center;font-size:.85rem;color:#5a4200">📷 Escanea el código para identificarlo</div>
 <button id="btn">Activar cámara</button>
-<button id="fotoEtiquetaBtn" type="button">📸 Analizar etiqueta: ¿Dónde está fabricado?</button>
+<button id="fotoEtiquetaBtn" type="button">📸 Leer etiqueta: ¿Dónde está fabricado?</button>
 <input id="fotoEtiqueta" type="file" accept="image/*" capture="environment" style="display:none">
-<div id="ocrEstado" style="display:none;margin:8px 0;text-align:center;font-size:.85rem;color:#5a4200"></div>
+<div id="ocrProgreso" style="display:none;margin-top:8px;background:#fff;border-radius:10px;padding:8px;text-align:left">
+  <div id="ocrTexto" style="font-size:.85rem;color:#5a4200;margin-bottom:5px">📷 Preparando lectura...</div>
+  <div style="height:10px;background:#ddd;border-radius:99px;overflow:hidden">
+    <div id="ocrBarra" style="height:100%;width:0%;background:#1e9e3a;border-radius:99px;transition:width .15s ease"></div>
+  </div>
+  <div id="ocrPorcentaje" style="font-size:.75rem;color:#5a4200;text-align:center;margin-top:3px">0%</div>
+</div>
 <button id="vozBtn" type="button" style="background:#6b4e00;color:#fff">🔊 Voz: ACTIVADA</button>
 <div class="fila">
   <input id="manual" inputmode="numeric" placeholder="O escribe el código">
@@ -52,6 +58,7 @@
   <div id="frase" style="font-size:1.4rem;font-weight:bold;margin:8px 0"></div>
   <div id="pais"></div>
   <div id="fabricadoEn" style="margin:10px 0;font-size:1.15rem;font-weight:bold"></div>
+  <div id="envasadoEn" style="margin:10px 0;font-size:1.1rem;font-weight:bold"></div>
   <div id="fabrica" style="margin:10px 0;font-size:1.1rem"></div>
   <button id="buscaWeb" type="button" style="display:none">🔎 Buscar dónde se fabrica</button>
   <div id="buscaMsg" style="font-size:.9rem;margin-top:8px"></div>
@@ -66,8 +73,11 @@
 </div>
 
 <h2>🕘 Historial</h2>
-<div id="hist"></div>
-<button id="borrar">Borrar historial</button>
+<button id="toggleHist" type="button" style="background:#7a0f14;color:#F1BF00">👁️ Mostrar historial</button>
+<div id="histWrap" style="display:none">
+  <div id="hist"></div>
+  <button id="borrar">Borrar historial</button>
+</div>
 
 <div style="text-align:center; margin: 30px auto 10px; padding: 16px;">
   <p style="color:#5a4200; font-size:.9rem; margin-bottom:10px;">
@@ -628,97 +638,165 @@ let cacheWeb = null; // último resultado de "productos similares" para el produ
 const $ = id => document.getElementById(id);
 
 
-// ---------- Lectura de "Fabricado en..." desde una foto de la etiqueta ----------
+// ---------- Lectura rápida de "Fabricado en..." desde una foto ----------
 let etiquetaFabricacion = null;
+let etiquetaEnvasado = null;
 
-function detectarFabricacionEnTexto(texto){
-  const raw = String(texto || "");
-  const limpio = raw.replace(/\s+/g, " ").trim();
+function detectarDatosEtiqueta(texto){
+  const raw=String(texto||"");
+  const limpio=raw.replace(/\s+/g," ").trim();
+  const paisDeTexto=s=>{
+    const p=detectar(String(s||"").trim());
+    return p && p!=="Unión Europea" ? p : null;
+  };
 
-  // Una declaración explícita de fabricación tiene prioridad sobre el GS1
-  // y sobre las direcciones del importador/envasador.
-  const patrones = [
+  let fabricacion=null;
+  let envasado=null;
+
+  // FABRICACIÓN: Fabricado en / Made in / Manufactured in / Produced in...
+  const rf=[
     /(?:fabricado|fabricada|fabricacion|fabricación)\s*(?:en|:)\s*([A-Za-zÁÉÍÓÚÜÑáéíóúüñÀ-ÿ .'-]{2,40})/i,
     /(?:made|manufactured|produced)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .'-]{2,40})/i,
     /(?:fabriqué|fabrique|produit)\s*(?:en|:)\s*([A-Za-zÀ-ÿ .'-]{2,40})/i,
     /(?:prodotto|prodotta|fabbricato|fabbricata)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .'-]{2,40})/i,
     /(?:hergestellt|produziert)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .'-]{2,40})/i
   ];
-
-  for(const re of patrones){
-    const m = limpio.match(re);
+  for(const re of rf){
+    const m=limpio.match(re);
     if(m){
-      const p = detectar(m[1]);
-      if(p && p !== "Unión Europea"){
-        return {pais:p, detalle:m[0].trim(), texto:raw};
-      }
+      const p=paisDeTexto(m[1]);
+      if(p){ fabricacion={pais:p,detalle:m[0].trim(),texto:raw}; break; }
     }
   }
 
-  return null;
+  // ENVASADO: Envasado en / Packed in / Packaged in / Embalado en...
+  const reEnv=[
+    /(?:envasado|envasada|embalado|embalada|acondicionado|acondicionada)\s*(?:en|:)\s*([A-Za-zÁÉÍÓÚÜÑáéíóúüñÀ-ÿ .'-]{2,40})/i,
+    /(?:packed|packaged)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .'-]{2,40})/i,
+    /(?:emballé|emballe|conditionné|conditionnee|conditionnée)\s*(?:en|:)\s*([A-Za-zÀ-ÿ .'-]{2,40})/i,
+    /(?:confezionato|confezionata|imballato|imballata)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .'-]{2,40})/i,
+    /(?:verpackt|abgepackt)\s*(?:in|:)\s*([A-Za-zÀ-ÿ .'-]{2,40})/i
+  ];
+  for(const re of reEnv){
+    const m=limpio.match(re);
+    if(m){
+      const p=paisDeTexto(m[1]);
+      if(p){ envasado={pais:p,detalle:m[0].trim(),texto:raw}; break; }
+    }
+  }
+
+  return {fabricacion,envasado,texto:raw};
 }
 
-function aplicarEtiquetaFabricacion(info){
-  if(!info || !etiquetaFabricacion) return;
-  const e = etiquetaFabricacion;
-  const evidencia = {
-    pais:e.pais,
-    nivel:"confirmado",
-    fuente:"Texto visible en la etiqueta (OCR)",
-    detalle:e.detalle
-  };
-  info.prod = evidencia;
-  info.evidencias = Array.isArray(info.evidencias) ? info.evidencias : [];
-  info.evidencias.unshift(evidencia);
+function aplicarDatosEtiqueta(info,datos){
+  if(!info || !datos) return;
+
+  if(datos.fabricacion){
+    etiquetaFabricacion=datos.fabricacion;
+    const e=datos.fabricacion;
+    const evidencia={pais:e.pais,nivel:"confirmado",fuente:"Texto visible en la etiqueta (OCR)",detalle:e.detalle};
+    info.prod=evidencia;
+    info.evidencias=Array.isArray(info.evidencias)?info.evidencias:[];
+    info.evidencias.unshift(evidencia);
+  }
+
+  if(datos.envasado){
+    etiquetaEnvasado=datos.envasado;
+    const e=datos.envasado;
+    info.envasadoEtiqueta={pais:e.pais,nivel:"confirmado",fuente:"Texto visible en la etiqueta (OCR)",detalle:e.detalle};
+  }
+}
+
+function prepararImagenOCR(file,maxSide=1400){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    const url=URL.createObjectURL(file);
+    img.onload=()=>{
+      try{
+        const escala=Math.min(1,maxSide/Math.max(img.naturalWidth,img.naturalHeight));
+        const w=Math.max(1,Math.round(img.naturalWidth*escala));
+        const h=Math.max(1,Math.round(img.naturalHeight*escala));
+        const c=document.createElement("canvas");
+        c.width=w; c.height=h;
+        const ctx=c.getContext("2d",{willReadFrequently:true});
+        ctx.drawImage(img,0,0,w,h);
+        URL.revokeObjectURL(url);
+        resolve(c);
+      }catch(e){ URL.revokeObjectURL(url); reject(e); }
+    };
+    img.onerror=()=>{ URL.revokeObjectURL(url); reject(new Error("No se pudo abrir la imagen")); };
+    img.src=url;
+  });
+}
+
+function actualizarOCRProgreso(p,texto){
+  const wrap=$("ocrProgreso"),bar=$("ocrBarra"),pct=$("ocrPorcentaje"),msg=$("ocrTexto");
+  if(wrap) wrap.style.display="block";
+  const n=Math.max(0,Math.min(100,Math.round((Number(p)||0)*100)));
+  if(bar) bar.style.width=n+"%";
+  if(pct) pct.textContent=n+"%";
+  if(msg && texto) msg.textContent=texto;
 }
 
 async function analizarFotoEtiqueta(file){
-  const estado = $("ocrEstado");
   if(!file) return;
 
-  if(typeof Tesseract === "undefined"){
-    if(estado){
-      estado.style.display="block";
-      estado.textContent="⚠️ No se pudo cargar el lector de texto. Comprueba la conexión.";
-    }
-    return;
-  }
-
-  if(estado){
-    estado.style.display="block";
-    estado.textContent="📷 Analizando el texto de la etiqueta...";
-  }
+  actualizarOCRProgreso(0,"📷 Preparando la foto...");
+  const btn=$("fotoEtiquetaBtn");
+  if(btn){ btn.disabled=true; btn.textContent="📖 Leyendo etiqueta..."; }
 
   try{
-    const result = await Tesseract.recognize(file, "spa+eng+fra+ita+deu", {
-      logger:m => {
-        if(estado && m.status === "recognizing text" && typeof m.progress === "number"){
-          estado.textContent="📷 Leyendo etiqueta... "+Math.round(m.progress*100)+"%";
+    if(typeof Tesseract==="undefined") throw new Error("OCR no disponible");
+
+    const imagen=await prepararImagenOCR(file,1400);
+    actualizarOCRProgreso(0.05,"🔎 Iniciando lector de texto...");
+
+    const result=await Tesseract.recognize(imagen,"spa+eng",{
+      logger:m=>{
+        if(m.status==="recognizing text" && typeof m.progress==="number"){
+          actualizarOCRProgreso(0.05+m.progress*0.90,"📖 Leyendo la etiqueta...");
+        }else if(m.status==="loading language traineddata"){
+          actualizarOCRProgreso(0.02,"⬇️ Cargando lector de texto...");
+        }else if(m.status==="initializing api"){
+          actualizarOCRProgreso(0.03,"⚙️ Preparando lector...");
         }
       }
     });
 
-    const texto = result && result.data ? result.data.text : "";
-    const hallado = detectarFabricacionEnTexto(texto);
+    actualizarOCRProgreso(0.97,"🔍 Buscando fabricación y envasado...");
+    const texto=result&&result.data?result.data.text:"";
+    const datos=detectarDatosEtiqueta(texto);
 
-    if(!hallado){
-      etiquetaFabricacion = null;
-      if(estado) estado.textContent="⚪ No encontré una indicación clara como «Fabricado en…» en la foto.";
+    etiquetaFabricacion=datos.fabricacion||null;
+    etiquetaEnvasado=datos.envasado||null;
+
+    if(!datos.fabricacion && !datos.envasado){
+      actualizarOCRProgreso(1,"⚪ No encontré «Fabricado en», «Made in», «Envasado en» o «Packed in».");
       return;
     }
 
-    etiquetaFabricacion = hallado;
-
     if(actual && actual.info){
-      aplicarEtiquetaFabricacion(actual.info);
+      aplicarDatosEtiqueta(actual.info,datos);
       pintar(true);
     }
 
-    if(estado) estado.textContent="✅ Fabricación detectada en la etiqueta: "+hallado.pais;
-    hablar("Fabricación confirmada en "+hallado.pais+" por el texto de la etiqueta.");
+    const mensajes=[];
+    if(datos.fabricacion) mensajes.push("Fabricado en "+datos.fabricacion.pais);
+    if(datos.envasado) mensajes.push("Envasado en "+datos.envasado.pais);
+    actualizarOCRProgreso(1,"✅ "+mensajes.join(" · "));
+
+    if(datos.fabricacion && datos.envasado){
+      hablar("Fabricación confirmada en "+datos.fabricacion.pais+" y envasado confirmado en "+datos.envasado.pais+" por el texto de la etiqueta.");
+    }else if(datos.fabricacion){
+      hablar("Fabricación confirmada en "+datos.fabricacion.pais+". No se ha encontrado el país de envasado.");
+    }else{
+      hablar("Envasado confirmado en "+datos.envasado.pais+". No se ha encontrado el país de fabricación.");
+    }
   }catch(err){
     console.error(err);
-    if(estado) estado.textContent="⚠️ No pude leer la etiqueta. Prueba con una foto más cercana y nítida.";
+    actualizarOCRProgreso(1,"⚠️ No pude leer la etiqueta. Prueba con una foto más cercana y nítida.");
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent="📸 Leer etiqueta: ¿Dónde está fabricado?"; }
   }
 }
 
@@ -729,10 +807,10 @@ async function mostrar(codigo){
   const prefijo = paisDe(codigoProducto);
   const cuadro = $("resultado"); cuadro.style.display="block"; cuadro.className=""; actual=null;
   $("codigo").textContent="Código: "+codigo;
-  $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("gs1Datos").innerHTML=""; $("buscaMsg").textContent=""; $("webResultados").innerHTML=""; $("webResultados").style.display=""; $("buscaWeb").style.display="none"; $("buscaWeb").textContent="🔎 Buscar dónde se fabrica"; cacheWeb=null;
+  $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("envasadoEn").textContent=""; $("gs1Datos").innerHTML=""; $("buscaMsg").textContent=""; $("webResultados").innerHTML=""; $("webResultados").style.display=""; $("buscaWeb").style.display="none"; $("buscaWeb").textContent="🔎 Buscar dónde se fabrica"; cacheWeb=null;
   if(!prefijo){ $("pais").textContent="Código no válido"; hablar("Código no válido"); return; }
   $("pais").textContent="🔎 Consultando información del producto...";
-  const info=await buscarProducto(codigoProducto); aplicarEtiquetaFabricacion(info); actual={codigo:codigoProducto,prefijo,info,gs1Raw}; pintar();
+  const info=await buscarProducto(codigoProducto); aplicarDatosEtiqueta(info,{fabricacion:etiquetaFabricacion,envasado:etiquetaEnvasado}); actual={codigo:codigoProducto,prefijo,info,gs1Raw}; pintar();
 }
 
 
@@ -819,7 +897,16 @@ function pintar(silencio){
     $("fabricadoEn").textContent="⚪ Fabricación: no disponible";
   }
   if(info.fab) html+="<br>📍 <b>Lugar registrado:</b> "+esc(info.fab);
-  if(info.envasado) html+="<br>📦 <b>País asociado al envasador:</b> "+esc(info.envasado.pais)+" <small>(dato asociado; no demuestra por sí solo la fabricación)</small>";
+  if(info.envasadoEtiqueta){
+    html+="<br>🟢 📦 <b>Envasado en: "+esc(info.envasadoEtiqueta.pais)+"</b> <small>(Texto visible en la etiqueta)</small>";
+    if(info.envasadoEtiqueta.detalle) html+="<br><small>📌 Evidencia de envasado: "+esc(info.envasadoEtiqueta.detalle)+"</small>";
+    $("envasadoEn").textContent="🟢 Envasado en "+info.envasadoEtiqueta.pais;
+  }else if(info.envasado){
+    html+="<br>📦 <b>País asociado al envasador:</b> "+esc(info.envasado.pais)+" <small>(dato asociado; no demuestra por sí solo la fabricación)</small>";
+    $("envasadoEn").textContent="🟡 Establecimiento/envasador asociado: "+info.envasado.pais;
+  }else{
+    $("envasadoEn").textContent="⚪ Envasado: no disponible";
+  }
   if(info.packaging) html+="<br>📦 <b>Envase:</b> "+esc(info.packaging);
   if(info.emb) html+="<br>🔎 <b>Código de trazabilidad:</b> "+esc(info.emb);
   if(info.customer) html+="<br>🏢 <b>Datos de empresa:</b> "+esc(info.customer);
@@ -881,6 +968,22 @@ async function iniciar(){
   }
 }
 
+
+const toggleHist = document.getElementById("toggleHist");
+const histWrap = document.getElementById("histWrap");
+if(toggleHist && histWrap){
+  const histOculto = localStorage.getItem("histOculto") !== "0";
+  histWrap.style.display = histOculto ? "none" : "block";
+  toggleHist.textContent = histOculto ? "👁️ Mostrar historial" : "🙈 Ocultar historial";
+
+  toggleHist.onclick = () => {
+    const oculto = histWrap.style.display === "none";
+    histWrap.style.display = oculto ? "block" : "none";
+    localStorage.setItem("histOculto", oculto ? "0" : "1");
+    toggleHist.textContent = oculto ? "🙈 Ocultar historial" : "👁️ Mostrar historial";
+  };
+}
+
 const fotoEtiquetaBtn = document.getElementById("fotoEtiquetaBtn");
 const fotoEtiqueta = document.getElementById("fotoEtiqueta");
 if(fotoEtiquetaBtn && fotoEtiqueta){
@@ -888,7 +991,7 @@ if(fotoEtiquetaBtn && fotoEtiqueta){
   fotoEtiqueta.onchange = async () => {
     const file = fotoEtiqueta.files && fotoEtiqueta.files[0];
     if(file) await analizarFotoEtiqueta(file);
-    fotoEtiqueta.value = "";
+    fotoEtiqueta.value="";
   };
 }
 
