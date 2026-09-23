@@ -995,9 +995,9 @@ document.getElementById("buscaWeb").onclick = async () => {
       acondicionadoPor:"",origen:"",direccion:"",ciudad:"",provincia:"",
       pais:"",ingredientes:"",alergenos:"",raw};
 
-    r.fabricadoEn=lineaDespues(raw,/(?:(?:fabricad[oa]|hech[oa]|cread[oa]|elaborad[oa])\s+en|manufactured\s+in|made\s+in|produced\s+in|producid[oa]\s+en)\s*(.*)$/i);
+    r.fabricadoEn=lineaDespues(raw,/(?:(?:fabricad[oa]|hech[oa]|cread[oa]|elaborad[oa]|producid[oa]|manufacturad[oa])\s+en|(?:pa[ií]s|lugar)\s+de\s+(?:fabricaci[oó]n|producci[oó]n|origen)|fabricaci[oó]n\s+(?:en|de)|producci[oó]n\s+(?:en|de)|originari[oa]\s+de|manufactured\s+in|made\s+in|produced\s+in|manufactured\s+from|product\s+of|country\s+of\s+(?:manufacture|production|origin)|made\s+for)\s*(.*)$/i);
     if(!r.fabricadoEn){
-      const m=raw.match(/(?:(?:fabricad[oa]|hech[oa]|cread[oa]|elaborad[oa])\s+en|manufactured\s+in|made\s+in|produced\s+in|producid[oa]\s+en)\s*([^\n,.]+)/i);
+      const m=raw.match(/(?:(?:fabricad[oa]|hech[oa]|cread[oa]|elaborad[oa]|producid[oa]|manufacturad[oa])\s+en|(?:pa[ií]s|lugar)\s+de\s+(?:fabricaci[oó]n|producci[oó]n|origen)|fabricaci[oó]n\s+(?:en|de)|producci[oó]n\s+(?:en|de)|originari[oa]\s+de|manufactured\s+in|made\s+in|produced\s+in|manufactured\s+from|product\s+of|country\s+of\s+(?:manufacture|production|origin)|made\s+for)\s*([^\n,.]+)/i);
       if(m) r.fabricadoEn=m[1].trim();
     }
 
@@ -1089,7 +1089,7 @@ document.getElementById("buscaWeb").onclick = async () => {
         const img=new Image();
         img.onerror=()=>reject(new Error("La imagen no es válida"));
         img.onload=()=>{
-          const max=1800;
+          const max=1400;
           const escala=Math.min(1,max/Math.max(img.naturalWidth||img.width,img.naturalHeight||img.height));
           const w=Math.max(1,Math.round((img.naturalWidth||img.width)*escala));
           const h=Math.max(1,Math.round((img.naturalHeight||img.height)*escala));
@@ -1104,7 +1104,7 @@ document.getElementById("buscaWeb").onclick = async () => {
             a[i]=a[i+1]=a[i+2]=v;
           }
           x.putImageData(d,0,0);
-          resolve(c.toDataURL("image/jpeg",0.92));
+          resolve(c.toDataURL("image/jpeg",0.84));
         };
         img.src=fr.result;
       };
@@ -1116,31 +1116,46 @@ document.getElementById("buscaWeb").onclick = async () => {
     return !!(r.fabricadoEn||r.fabricante||r.envasadoEn||r.envasadoPor||r.importadoPor||r.procesado||r.distribuidoPor||r.etiquetadoPor||r.acondicionadoPor||r.origen||r.direccion||r.ciudad||r.provincia||r.pais||r.ingredientes);
   }
 
+  // Mantener el motor OCR cargado hace la siguiente lectura mucho más rápida.
+  let workerOCRL=null;
+  let workerOCRPromiseL=null;
+
+  async function obtenerWorkerOCRL(barra,pct){
+    if(workerOCRL) return workerOCRL;
+    if(workerOCRPromiseL) return workerOCRPromiseL;
+    workerOCRPromiseL=Tesseract.createWorker("spa+eng",1,{logger:m=>{
+      if(m && typeof m.progress==="number"){
+        // La carga inicial ocupa 10%; el OCR real ocupa el 10-95%.
+        const p=Math.max(10,Math.min(95,Math.round(10+m.progress*85)));
+        barra.style.width=p+"%";pct.textContent=p+"%";
+      }
+    }}).then(async w=>{
+      try{await w.setParameters({tessedit_pageseg_mode:"6",preserve_interword_spaces:"1",user_defined_dpi:"300"});}catch(_e){}
+      workerOCRL=w;
+      workerOCRPromiseL=null;
+      return w;
+    }).catch(e=>{workerOCRPromiseL=null;throw e;});
+    return workerOCRPromiseL;
+  }
+
   async function leerEtiquetaL(file){
     const estado=E("lqddEstadoEtiqueta"), barra=E("lqddBarraEtiqueta"), pct=E("lqddPorcentajeEtiqueta"), res=E("lqddResultadoEtiqueta");
-    estado.style.display="block";res.style.display="none";barra.style.width="2%";pct.textContent="2%";
-    let worker=null;
+    estado.style.display="block";res.style.display="none";barra.style.width="3%";pct.textContent="3%";
     try{
       if(!file) return;
       if(!window.Tesseract) throw new Error("OCR no disponible");
+      barra.style.width="7%";pct.textContent="7%";
       const imagen=await prepararImagenEtiquetaL(file);
-      barra.style.width="5%";pct.textContent="5%";
+      barra.style.width="10%";pct.textContent="10%";
 
-      worker=await Tesseract.createWorker("spa+eng",1,{logger:m=>{
-        if(m && typeof m.progress==="number"){
-          const p=Math.max(5,Math.min(96,Math.round(m.progress*100)));
-          barra.style.width=p+"%";pct.textContent=p+"%";
-        }
-      }});
-      try{await worker.setParameters({tessedit_pageseg_mode:"6",preserve_interword_spaces:"1",user_defined_dpi:"300"});}catch(_e){}
-
+      const worker=await obtenerWorkerOCRL(barra,pct);
       let ret=await worker.recognize(imagen);
       let texto=String(ret&&ret.data&&ret.data.text||"");
       let datos=extraerEtiquetaL(texto);
 
-      // Segunda pasada con la foto original si la primera no encontró datos claros.
+      // Solo hacemos una segunda pasada si realmente no se ha detectado ningún dato útil.
       if(!hayDatoEtiquetaL(datos)){
-        barra.style.width="65%";pct.textContent="65%";
+        barra.style.width="70%";pct.textContent="70%";
         ret=await worker.recognize(file);
         texto=String(ret&&ret.data&&ret.data.text||"");
         datos=extraerEtiquetaL(texto);
@@ -1167,8 +1182,6 @@ document.getElementById("buscaWeb").onclick = async () => {
       E("lqddTextoEtiqueta").innerHTML="<b>⚠️ No se pudo leer la etiqueta.</b><br><small>Comprueba la conexión a Internet y haz una foto nítida, de cerca y con buena iluminación.</small>";
       res.style.display="block";
       setTimeout(()=>{estado.style.display="none";},700);
-    }finally{
-      if(worker){try{await worker.terminate();}catch(_e){}}
     }
   }
 
