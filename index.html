@@ -974,30 +974,35 @@ document.getElementById("buscaWeb").onclick = async () => {
       acondicionadoPor:"",origen:"",direccion:"",ciudad:"",provincia:"",
       pais:"",ingredientes:"",alergenos:"",raw};
 
-    r.fabricadoEn=lineaDespues(raw,/(?:fabricad[oa]|manufactured|made in|produced|producid[oa])\s+(?:en|in|at)?\s*(.*)$/i);
+    r.fabricadoEn=lineaDespues(raw,/(?:(?:fabricad[oa])\s+en|manufactured\s+in|made\s+in|produced\s+in|producid[oa]\s+en)\s*(.*)$/i);
     if(!r.fabricadoEn){
-      const m=raw.match(/(?:fabricad[oa]|manufactured|made in|produced|producid[oa])\s+(?:en|in|at)?\s*([^\n,.]+)/i);
+      const m=raw.match(/(?:(?:fabricad[oa])\s+en|manufactured\s+in|made\s+in|produced\s+in|producid[oa]\s+en)\s*([^\n,.]+)/i);
       if(m) r.fabricadoEn=m[1].trim();
     }
 
-    r.fabricante=lineaDespues(raw,/(?:fabricad[oa]\s+por|manufactured by|made by|produced by)\s*:?\s*(.*)$/i);
+    r.fabricante=lineaDespues(raw,/(?:fabricad[oa]\s+por|manufactured\s+by|made\s+by|produced\s+by)\s*:?[ ]*(.*)$/i);
     r.envasadoEn=lineaDespues(raw,/(?:envasad[oa]|embasad[oa]|packed|packaged)\s+(?:en|in)\s*:?\s*(.*)$/i);
-    r.envasadoPor=lineaDespues(raw,/(?:envasad[oa]|embasad[oa])\s+por|packed by|packaged by\s*:?\s*(.*)$/i);
-    r.importadoPor=lineaDespues(raw,/(?:importad[oa]\s+por|imported by)\s*:?\s*(.*)$/i);
+    r.envasadoPor=lineaDespues(raw,/(?:(?:envasad[oa]|embasad[oa])\s+por|packed\s+by|packaged\s+by)\s*:?[ ]*(.*)$/i);
+    r.importadoPor=lineaDespues(raw,/(?:(?:importad[oa])\s+por|imported\s+by)\s*:?[ ]*(.*)$/i);
     r.procesado=lineaDespues(raw,/(?:procesad[oa]|processed)\s+(?:en|in|por|by)?\s*:?\s*(.*)$/i);
     r.distribuidoPor=lineaDespues(raw,/(?:distribuid[oa]\s+por|distributed by)\s*:?\s*(.*)$/i);
     r.etiquetadoPor=lineaDespues(raw,/(?:etiquetad[oa]\s+por|labelled by|labeled by)\s*:?\s*(.*)$/i);
     r.acondicionadoPor=lineaDespues(raw,/(?:acondicionad[oa]\s+por|conditioned by)\s*:?\s*(.*)$/i);
     r.origen=lineaDespues(raw,/(?:pais de origen|country of origin|product of)\s*:?\s*(.*)$/i);
 
-    const ingMatch=raw.match(/(?:ingredientes|ingredients|ingrédients|ingredienti|zutaten)\s*:?\s*([\s\S]*?)(?=\n\s*(?:al[eé]rgenos|allergens|allerg[eè]nes|may contain|puede contener|conservaci[oó]n|nutrition|informaci[oó]n nutricional)\b|$)/i);
+    const ingMatch=raw.match(/(?:ingredientes|ingredients|ingr[eé]dients|ingrédients|ingredienti|zutaten)\s*(?:[:\-–—]\s*)?([\s\S]*?)(?=\n\s*(?:al[eé]rgenos|alergeno|allergens|allerg[eè]nes|may contain|puede contener|puede contener trazas|conservaci[oó]n|conservar|nutrition|informaci[oó]n nutricional|valores nutricionales|energy|energ[ií]a)\b|$)/i);
     if(ingMatch) r.ingredientes=ingMatch[1].replace(/\s+/g," ").trim();
 
-    const alMatch=raw.match(/(?:al[eé]rgenos|allergens|allerg[eè]nes|may contain|puede contener)\s*:?\s*([\s\S]*?)(?=\n\s*(?:conservaci[oó]n|nutrition|informaci[oó]n nutricional)\b|$)/i);
+    if(!r.ingredientes){
+      const im=normL(raw).match(/(?:ingredientes|ingredients|ingrédients|ingredienti|zutaten)\s+(.{10,500})/i);
+      if(im) r.ingredientes=im[1].split(/\n\s*(?:alergenos|allergens|puede contener|nutrition|valores nutricionales)\b/i)[0].replace(/\s+/g," ").trim();
+    }
+
+    const alMatch=raw.match(/(?:al[eé]rgenos|alergeno|allergens|allerg[eè]nes|may contain|puede contener|puede contener trazas)\s*(?:[:\-–—]\s*)?([\s\S]*?)(?=\n\s*(?:conservaci[oó]n|conservar|nutrition|informaci[oó]n nutricional|valores nutricionales)\b|$)/i);
     if(alMatch) r.alergenos=alMatch[1].replace(/\s+/g," ").trim();
 
     // Dirección: solo se interpreta como dirección, nunca como prueba de fabricación.
-    const addr=/((?:c\/|c\.|calle|avenida|av\.|paseo|plaza|camino|carretera|finca|street|road|avenue)\s+[^\n]+)/i.exec(raw);
+    const addr=/((?:c\/|c\.|calle|avenida|av\.|paseo|plaza|camino|carretera|finca|domicilio|address|street|road|avenue)\s+[^\n]+)/i.exec(raw);
     if(addr) r.direccion=addr[1].trim();
 
     // Código postal español + ciudad + provincia entre paréntesis.
@@ -1049,29 +1054,94 @@ document.getElementById("buscaWeb").onclick = async () => {
     };
   }
 
+  function prepararImagenEtiquetaL(file){
+    return new Promise((resolve,reject)=>{
+      const fr=new FileReader();
+      fr.onerror=()=>reject(new Error("No se pudo abrir la foto"));
+      fr.onload=()=>{
+        const img=new Image();
+        img.onerror=()=>reject(new Error("La imagen no es válida"));
+        img.onload=()=>{
+          const max=1800;
+          const escala=Math.min(1,max/Math.max(img.naturalWidth||img.width,img.naturalHeight||img.height));
+          const w=Math.max(1,Math.round((img.naturalWidth||img.width)*escala));
+          const h=Math.max(1,Math.round((img.naturalHeight||img.height)*escala));
+          const c=document.createElement("canvas"); c.width=w; c.height=h;
+          const x=c.getContext("2d",{willReadFrequently:true});
+          x.drawImage(img,0,0,w,h);
+          const d=x.getImageData(0,0,w,h), a=d.data;
+          // Mejora el contraste sin eliminar completamente el color de la etiqueta.
+          for(let i=0;i<a.length;i+=4){
+            const g=0.299*a[i]+0.587*a[i+1]+0.114*a[i+2];
+            const v=Math.max(0,Math.min(255,(g-128)*1.35+128));
+            a[i]=a[i+1]=a[i+2]=v;
+          }
+          x.putImageData(d,0,0);
+          resolve(c.toDataURL("image/jpeg",0.92));
+        };
+        img.src=fr.result;
+      };
+      fr.readAsDataURL(file);
+    });
+  }
+
+  function hayDatoEtiquetaL(r){
+    return !!(r.fabricadoEn||r.fabricante||r.envasadoEn||r.envasadoPor||r.importadoPor||r.procesado||r.distribuidoPor||r.etiquetadoPor||r.acondicionadoPor||r.origen||r.direccion||r.ciudad||r.provincia||r.pais||r.ingredientes);
+  }
+
   async function leerEtiquetaL(file){
     const estado=E("lqddEstadoEtiqueta"), barra=E("lqddBarraEtiqueta"), pct=E("lqddPorcentajeEtiqueta"), res=E("lqddResultadoEtiqueta");
     estado.style.display="block";res.style.display="none";barra.style.width="2%";pct.textContent="2%";
+    let worker=null;
     try{
+      if(!file) return;
       if(!window.Tesseract) throw new Error("OCR no disponible");
-      const worker=await Tesseract.createWorker("spa+eng+fra+ita+deu",1,{logger:m=>{
+      const imagen=await prepararImagenEtiquetaL(file);
+      barra.style.width="5%";pct.textContent="5%";
+
+      worker=await Tesseract.createWorker("spa+eng",1,{logger:m=>{
         if(m && typeof m.progress==="number"){
-          const p=Math.max(2,Math.min(100,Math.round(m.progress*100)));
+          const p=Math.max(5,Math.min(96,Math.round(m.progress*100)));
           barra.style.width=p+"%";pct.textContent=p+"%";
         }
       }});
-      const ret=await worker.recognize(file);
-      await worker.terminate();
+      try{await worker.setParameters({tessedit_pageseg_mode:"6",preserve_interword_spaces:"1",user_defined_dpi:"300"});}catch(_e){}
+
+      let ret=await worker.recognize(imagen);
+      let texto=String(ret&&ret.data&&ret.data.text||"");
+      let datos=extraerEtiquetaL(texto);
+
+      // Segunda pasada con la foto original si la primera no encontró datos claros.
+      if(!hayDatoEtiquetaL(datos)){
+        barra.style.width="65%";pct.textContent="65%";
+        ret=await worker.recognize(file);
+        texto=String(ret&&ret.data&&ret.data.text||"");
+        datos=extraerEtiquetaL(texto);
+      }
+
+      // Si OCR sí leyó texto pero no encontró una etiqueta estándar, mostramos el texto útil.
+      if(!hayDatoEtiquetaL(datos)){
+        const limpio=limpiarOCR(texto);
+        E("lqddTextoEtiqueta").innerHTML=limpio
+          ? "<b>📝 Texto detectado:</b><div style='white-space:pre-wrap;margin-top:6px'>"+escL(limpio.slice(0,3500))+"</div>"
+          : "<b>⚠️ La foto no contiene texto legible.</b><br><small>Haz la foto más cerca, recta y con buena luz.</small>";
+        E("lqddIngredientesEtiqueta").style.display="none";
+        E("lqddIngredientesBox").style.display="none";
+      }else{
+        renderEtiquetaL(datos);
+      }
+
       barra.style.width="100%";pct.textContent="100%";
-      const datos=extraerEtiquetaL(ret.data&&ret.data.text||"");
-      renderEtiquetaL(datos);
       res.style.display="block";
       setTimeout(()=>{estado.style.display="none";},500);
     }catch(e){
+      console.error("LQDD OCR:",e);
       barra.style.width="100%";pct.textContent="Error";
-      E("lqddTextoEtiqueta").innerHTML="<b>⚠️ No se pudo leer la etiqueta.</b><br><small>Haz una foto nítida, de cerca y con buena iluminación.</small>";
+      E("lqddTextoEtiqueta").innerHTML="<b>⚠️ No se pudo leer la etiqueta.</b><br><small>Comprueba la conexión a Internet y haz una foto nítida, de cerca y con buena iluminación.</small>";
       res.style.display="block";
       setTimeout(()=>{estado.style.display="none";},700);
+    }finally{
+      if(worker){try{await worker.terminate();}catch(_e){}}
     }
   }
 
@@ -1081,6 +1151,19 @@ document.getElementById("buscaWeb").onclick = async () => {
     if(f) leerEtiquetaL(f);
     ev.target.value="";
   };
+
+  try{
+    const resultadoPrincipal=E("resultado");
+    if(resultadoPrincipal){
+      const obs=new MutationObserver(()=>{
+        if(resultadoPrincipal.classList.contains("ok") && resultadoPrincipal.style.display==="none"){
+          resultadoPrincipal.style.display="block";
+        }
+      });
+      obs.observe(resultadoPrincipal,{attributes:true,attributeFilter:["style","class"]});
+    }
+  }catch(e){}
+
   E("lqddCerrarEtiqueta").onclick=()=>{
     E("lqddResultadoEtiqueta").style.display="none";
     E("lqddEstadoEtiqueta").style.display="none";
@@ -1089,47 +1172,7 @@ document.getElementById("buscaWeb").onclick = async () => {
     E("lqddIngredientesBox").style.display="none";
   };
 
-  // Historial ampliado, aislado: guarda una copia de 'actual' y permite reabrirla.
-  try{
-    const guardarOriginalL=guardar;
-    guardar=function(codigo,pais,fab){
-      try{
-        if(window.actual && actual.codigo===codigo){
-          localStorage.setItem("lqdd_info_"+codigo,JSON.stringify(actual));
-        }
-      }catch(e){}
-      guardarOriginalL(codigo,pais,fab);
-      setTimeout(()=>{
-        try{
-          const items=document.querySelectorAll("#hist .item");
-          if(items[0]){
-            items[0].style.transition="all .4s";
-            items[0].style.fontSize=".82rem";
-            items[0].style.padding="7px 10px";
-            items[0].title="Toca para volver a abrir la información";
-            items[0].style.cursor="pointer";
-            items[0].onclick=()=>{ mostrar(codigo); };
-          }
-        }catch(e){}
-      },250);
-    };
-  }catch(e){}
-
-  // También hace clicables los elementos que ya estaban guardados antes de instalar esta versión.
-  try{
-    const pintarHistOriginalL=pintarHist;
-    pintarHist=function(){
-      pintarHistOriginalL();
-      const h=cargarHist();
-      document.querySelectorAll("#hist .item").forEach((el,i)=>{
-        const x=h[i]; if(!x)return;
-        el.style.cursor="pointer";
-        el.title="Toca para volver a abrir la información";
-        el.onclick=()=>{ try{ mostrar(x.codigo); }catch(e){} };
-      });
-    };
-    pintarHist();
-  }catch(e){}
+  // Historial original intacto.
 })();
 </script>
 
