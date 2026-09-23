@@ -62,7 +62,7 @@
   <div id="fabrica" style="margin:10px 0;font-size:1.1rem"></div>
   <button id="buscaWeb" type="button" style="display:none">🔎 Buscar dónde se fabrica</button>
   <div id="buscaMsg" style="font-size:.9rem;margin-top:8px"></div>
-  <button id="verIngredientes" type="button" style="display:none">🧪 ¿Quieres saber los ingredientes?</button>
+  <button id="verIngredientes" type="button" style="display:block">🧪 ¿Quieres saber los ingredientes?</button>
   <div id="ingredientesBox" style="margin-top:10px;text-align:left;font-size:.95rem;display:none;background:#fff7d6;border:1px solid #e0c45c;border-radius:10px;padding:10px"></div>
   <div id="webResultados" style="margin-top:12px;text-align:left"></div>
   <small id="origen"></small>
@@ -646,8 +646,22 @@ function detectarDatosEtiqueta(texto){
   const raw=String(texto||"");
   const limpio=raw.replace(/\s+/g," ").trim();
   const paisDeTexto=s=>{
-    const p=detectar(String(s||"").trim());
-    return p && p!=="Unión Europea" ? p : null;
+    const valor=String(s||"").trim();
+    // First try the complete fragment.
+    const p=detectar(valor);
+    if(p && p!=="Unión Europea") return p;
+
+    // OCR often adds the next words after the country. Look for a country
+    // anywhere in the short fragment instead of requiring an exact match.
+    const t=norm(valor);
+    for(const [pais,alias] of ALIAS){
+      for(const a of alias){
+        if(new RegExp("(^|[^a-z])"+a.replace(/[.]/g,"\\.")+"([^a-z]|$)").test(t)){
+          if(pais!=="Unión Europea") return pais;
+        }
+      }
+    }
+    return null;
   };
 
   let fabricacion=null;
@@ -720,6 +734,18 @@ function prepararImagenOCR(file,maxSide=1400){
         c.width=w; c.height=h;
         const ctx=c.getContext("2d",{willReadFrequently:true});
         ctx.drawImage(img,0,0,w,h);
+
+        // Mejoramos contraste para que palabras pequeñas como
+        // "Envasado en..." sean más fáciles de reconocer.
+        const data=ctx.getImageData(0,0,w,h);
+        for(let i=0;i<data.data.length;i+=4){
+          const r=data.data[i], g=data.data[i+1], b=data.data[i+2];
+          const y=0.299*r+0.587*g+0.114*b;
+          const v=Math.max(0,Math.min(255,(y-128)*1.35+128));
+          data.data[i]=v; data.data[i+1]=v; data.data[i+2]=v;
+        }
+        ctx.putImageData(data,0,0);
+
         URL.revokeObjectURL(url);
         resolve(c);
       }catch(e){ URL.revokeObjectURL(url); reject(e); }
@@ -771,7 +797,7 @@ async function analizarFotoEtiqueta(file){
     etiquetaEnvasado=datos.envasado||null;
 
     if(!datos.fabricacion && !datos.envasado){
-      actualizarOCRProgreso(1,"⚪ No encontré «Fabricado en», «Made in», «Envasado en» o «Packed in».");
+      actualizarOCRProgreso(1,"⚪ No encontré una indicación clara de fabricación o envasado en la foto.");
       return;
     }
 
@@ -920,7 +946,7 @@ function pintar(silencio){
   $("buscaWeb").style.display=tieneFabricacion?"none":"block";
   const btnIng=$("verIngredientes"), boxIng=$("ingredientesBox");
   if(btnIng){
-    btnIng.style.display=info.ingredients?"block":"none";
+    btnIng.style.display="block";
     btnIng.textContent="🧪 ¿Quieres saber los ingredientes?";
   }
   if(boxIng){ boxIng.style.display="none"; boxIng.innerHTML=""; }
@@ -1022,12 +1048,18 @@ if(verIngredientesBtn){
       box.innerHTML = "";
       btn.textContent = "🧪 ¿Quieres saber los ingredientes?";
     } else {
-      let html = "🧪 <b>Ingredientes:</b> " + esc(info.ingredients);
+      let html = info.ingredients
+        ? "🧪 <b>Ingredientes:</b> " + esc(info.ingredients)
+        : "⚪ <b>Ingredientes:</b> no disponibles para este producto.";
       if(info.alergenos) html += "<br>⚠️ <b>Alérgenos:</b> " + esc(info.alergenos);
       box.innerHTML = html;
       box.style.display = "block";
       btn.textContent = "🙈 Ocultar ingredientes";
-      hablar("Los ingredientes son: " + info.ingredients + (info.alergenos ? ". Contiene alérgenos: " + info.alergenos : ""));
+      if(info.ingredients){
+        hablar("Los ingredientes son: " + info.ingredients + (info.alergenos ? ". Contiene alérgenos: " + info.alergenos : ""));
+      }else{
+        hablar("No hay información de ingredientes disponible para este producto.");
+      }
     }
   };
 }
