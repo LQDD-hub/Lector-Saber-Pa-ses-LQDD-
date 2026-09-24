@@ -149,16 +149,29 @@ function bandera(nombre){
   return c ? String.fromCodePoint(...[...c].map(x => 127397 + x.charCodeAt(0))) : "🌍";
 }
 
+// Identificador único LQDD: el mismo producto siempre usa el mismo GTIN.
+// UPC-A (12 dígitos) se normaliza a EAN-13 añadiendo el cero inicial.
+function normalizarCodigoProducto(codigo){
+  let c=String(codigo||"").replace(/\D/g,"");
+  if(c.length===12) c="0"+c;
+  return c;
+}
+
 // Historial (se guarda en el propio móvil)
 function escHist(s){ return String(s??"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function cargarHist(){ try{ return JSON.parse(localStorage.getItem("hist")||"[]"); }catch(e){ return []; } }
 function guardar(codigo, pais, fab, extra){
+  const codigoN=normalizarCodigoProducto(codigo);
   const todos = cargarHist();
-  const previo = todos.find(x => x.codigo === codigo);
+  const previo = todos.find(x => normalizarCodigoProducto(x.codigo) === codigoN);
   const snapshot = (extra&&extra.snapshot) || null;
-  const etiqueta = (snapshot && snapshot.info && snapshot.info.etiquetaL) || (previo && previo.etiqueta) || null;
-  const h = todos.filter(x => x.codigo !== codigo);
-  h.unshift({codigo, pais, fab, fecha:new Date().toLocaleString("es-ES"),
+  const etiqueta = (snapshot && snapshot.info && snapshot.info.etiquetaL)
+    || (extra&&extra.etiqueta)
+    || (previo && previo.etiqueta) || null;
+  // MISMO CÓDIGO = MISMA FICHA. Eliminamos cualquier copia anterior y
+  // escribimos la nueva información en su lugar.
+  const h = todos.filter(x => normalizarCodigoProducto(x.codigo) !== codigoN);
+  h.unshift({codigo:codigoN, pais, fab, fecha:new Date().toLocaleString("es-ES"),
     nombre:(extra&&extra.nombre)||"", frase:(extra&&extra.frase)||"",
     snapshot:snapshot, etiqueta:etiqueta});
   try{ localStorage.setItem("hist", JSON.stringify(h.slice(0,50))); }catch(e){}
@@ -167,7 +180,7 @@ function guardar(codigo, pais, fab, extra){
 function abrirHistorial(idx){
   const h = cargarHist(), entry = h[idx];
   if(!entry || !entry.snapshot) return;
-  actual = {codigo:entry.codigo, prefijo:entry.snapshot.prefijo, info:entry.snapshot.info || {}, gs1Raw:entry.snapshot.gs1Raw};
+  actual = {codigo:normalizarCodigoProducto(entry.codigo), prefijo:entry.snapshot.prefijo, info:entry.snapshot.info || {}, gs1Raw:entry.snapshot.gs1Raw};
   if(entry.etiqueta){
     actual.info = actual.info || {};
     actual.info.etiquetaL = entry.etiqueta;
@@ -748,7 +761,7 @@ async function consultarLQDDGlobal(codigo){
 async function enviarAportacionLQDD(codigo, info){
   try{
     const payload={
-      codigo:String(codigo||""),
+      codigo:normalizarCodigoProducto(codigo),
       tipo_dato:"producto_escaneado",
       dato:JSON.stringify({
         nombre:info&&info.nombre||"",
@@ -814,14 +827,14 @@ function lqddEtiquetaSemilla(codigo){
 // Guarda la lectura completa de la etiqueta en la base central LQDD.
 // La etiqueta queda asociada al código de barras y no al teléfono.
 async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
-  const cod=String(codigo||"").replace(/\D/g,"");
+  const cod=normalizarCodigoProducto(codigo);
   if(!cod || !etiqueta || typeof etiqueta!=="object") throw new Error("Faltan el código o los datos de la etiqueta.");
 
   const payload={
     codigo:cod,
     tipo_dato:"etiqueta_ocr",
     dato:JSON.stringify({
-      version:1,
+      version:2,
       codigo:cod,
       etiqueta:Object.assign({},etiqueta),
       fuente_lectura:"OCR LQDD Scanner"
@@ -830,32 +843,32 @@ async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
     estado:"pendiente"
   };
 
-  // La base central es la fuente principal. Si ya existe una etiqueta para
-  // este código, la actualizamos; si no existe, creamos el registro.
-  let existente=null;
-  let consulta="/rest/v1/contributions?select=id,dato&codigo=eq."+encodeURIComponent(cod)+"&tipo_dato=eq.etiqueta_ocr&limit=1";
+  // Buscar TODOS los registros del mismo código. Si por una versión anterior
+  // quedaron duplicados, los actualizamos todos con la lectura más reciente.
+  const consulta="/rest/v1/contributions?select=id&codigo=eq."+encodeURIComponent(cod)+"&tipo_dato=eq.etiqueta_ocr";
   let r=await lqddSupabaseFetch(consulta);
   if(!r.ok){
     const detalle=await r.text().catch(()=>"");
     throw new Error("La base de datos no permite consultar la etiqueta (HTTP "+r.status+"). "+detalle.slice(0,180));
   }
   const datos=await r.json().catch(()=>[]);
-  if(Array.isArray(datos) && datos[0]) existente=datos[0];
+  const ids=Array.isArray(datos)?datos.map(x=>x&&x.id).filter(x=>x!=null):[];
 
-  if(existente && existente.id!=null){
-    r=await lqddSupabaseFetch("/rest/v1/contributions?id=eq."+encodeURIComponent(existente.id),{
-      method:"PATCH",
-      headers:{"Content-Type":"application/json","Prefer":"return=minimal"},
-      body:JSON.stringify(payload)
-    });
-    if(!r.ok){
-      const detalle=await r.text().catch(()=>"");
-      throw new Error("No se pudo actualizar la etiqueta en Supabase (HTTP "+r.status+"). "+detalle.slice(0,180));
+  if(ids.length){
+    for(const id of ids){
+      r=await lqddSupabaseFetch("/rest/v1/contributions?id=eq."+encodeURIComponent(id),{
+        method:"PATCH",
+        headers:{"Content-Type":"application/json","Prefer":"return=minimal"},
+        body:JSON.stringify(payload)
+      });
+      if(!r.ok){
+        const detalle=await r.text().catch(()=>"");
+        throw new Error("No se pudo actualizar la etiqueta en Supabase (HTTP "+r.status+"). "+detalle.slice(0,180));
+      }
     }
     return true;
   }
 
-  // Si no hay registro todavía, lo insertamos directamente en la tabla central.
   r=await lqddSupabaseFetch("/rest/v1/contributions",{
     method:"POST",
     headers:{"Content-Type":"application/json","Prefer":"return=minimal"},
@@ -868,10 +881,50 @@ async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
   return true;
 }
 
+// Guarda/actualiza también la ficha principal del producto. La clave es siempre
+// el mismo código de barras normalizado; nunca se crea una segunda ficha para
+// el mismo GTIN desde este teléfono.
+async function guardarProductoCentralLQDD(codigo, info){
+  const cod=normalizarCodigoProducto(codigo);
+  if(!cod || !info) return false;
+  const payload={
+    codigo:cod,
+    tipo_dato:"producto_escaneado",
+    dato:JSON.stringify({
+      version:2, codigo:cod,
+      nombre:info.nombre||"", marca:info.marca||"", cantidad:info.cantidad||"",
+      categoria:info.categoria||"", fabricacion:info.prod||null, origen:info.ori||"",
+      ingredientes:info.ingredients||"", alergenos:info.alergenos||"",
+      etiqueta:info.etiquetaL||null, fuente_lectura:"LQDD Scanner"
+    }),
+    fuente:"LQDD Scanner", estado:"pendiente"
+  };
+  const q="/rest/v1/contributions?select=id&codigo=eq."+encodeURIComponent(cod)+"&tipo_dato=eq.producto_escaneado";
+  let r=await lqddSupabaseFetch(q);
+  if(!r.ok) throw new Error("No se pudo consultar la ficha del producto (HTTP "+r.status+").");
+  const rows=await r.json().catch(()=>[]);
+  const ids=Array.isArray(rows)?rows.map(x=>x&&x.id).filter(x=>x!=null):[];
+  if(ids.length){
+    for(const id of ids){
+      r=await lqddSupabaseFetch("/rest/v1/contributions?id=eq."+encodeURIComponent(id),{
+        method:"PATCH", headers:{"Content-Type":"application/json","Prefer":"return=minimal"}, body:JSON.stringify(payload)
+      });
+      if(!r.ok) throw new Error("No se pudo actualizar la ficha del producto (HTTP "+r.status+").");
+    }
+    return true;
+  }
+  r=await lqddSupabaseFetch("/rest/v1/contributions",{
+    method:"POST", headers:{"Content-Type":"application/json","Prefer":"return=minimal"}, body:JSON.stringify(payload)
+  });
+  if(!r.ok) throw new Error("No se pudo guardar la ficha del producto (HTTP "+r.status+").");
+  return true;
+}
+
+
 // Recupera SIEMPRE primero la etiqueta de la base central.
 // El localStorage solo queda como caché si Supabase no responde.
 async function consultarEtiquetaCentralLQDD(codigo){
-  const cod=String(codigo||"").replace(/\D/g,"");
+  const cod=normalizarCodigoProducto(codigo);
   if(!cod) return null;
   const base="/rest/v1/contributions?select=dato&codigo=eq."+encodeURIComponent(cod)+"&tipo_dato=eq.etiqueta_ocr";
   try{
@@ -1065,7 +1118,7 @@ function guardarFab(c,p){ try{ localStorage.setItem("fab_"+c, JSON.stringify(p))
 // el mismo producto no es necesario volver a fotografiar la etiqueta.
 function cargarEtiquetaGuardada(c){
   try{
-    const cod=String(c||"").replace(/\D/g,"");
+    const cod=normalizarCodigoProducto(c);
     if(!cod) return null;
     const directa=JSON.parse(localStorage.getItem("etiqueta_"+cod)||"null");
     if(directa && typeof directa==="object") return directa;
@@ -1076,7 +1129,7 @@ function cargarEtiquetaGuardada(c){
 }
 function guardarEtiquetaPorCodigo(c,r){
   try{
-    const cod=String(c||"").replace(/\D/g,"");
+    const cod=normalizarCodigoProducto(c);
     if(cod && r && typeof r==="object") localStorage.setItem("etiqueta_"+cod,JSON.stringify(r));
   }catch(e){}
 }
@@ -1087,7 +1140,7 @@ const $ = id => document.getElementById(id);
 async function mostrar(codigo){
   const gs1Raw=String(codigo||"");
   const gs1=extraerGS1(gs1Raw);
-  const codigoProducto=gs1.gtin || String(codigo||"").replace(/\D/g,"");
+  const codigoProducto=normalizarCodigoProducto(gs1.gtin || codigo);
   const prefijo = paisDe(codigoProducto);
   const cuadro = $("resultado"); cuadro.style.display="block"; cuadro.className=""; actual=null;
   $("codigo").textContent="Código: "+codigo;
@@ -1211,7 +1264,7 @@ function renderDatosEtiquetaGuardados(r){
 }
 
 function pintar(silencio, sinGuardar){
-  const {codigo,prefijo,info}=actual, cuadro=$("resultado");
+  const {codigo:codigoOriginal,prefijo,info}=actual, codigo=normalizarCodigoProducto(codigoOriginal), cuadro=$("resultado");
   const gs1=pintarGS1(actual.gs1Raw||"");
   const paisPrefijo=prefijo==="España / Andorra"?"España":prefijo;
   const paisFab=info.prod?(info.prod.pais==="España / Andorra"?"España":info.prod.pais):null;
@@ -1269,8 +1322,8 @@ function pintar(silencio, sinGuardar){
     try{ snapshot=JSON.parse(JSON.stringify({prefijo,info,gs1Raw:actual.gs1Raw||""})); }catch(e){}
     guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1",
       {nombre:info.nombre||"", frase, snapshot});
-    if(!info._lqddGlobal && (info.nombre || info.marca || info.prod || info.ori)){
-      enviarAportacionLQDD(codigo,info).catch(()=>{});
+    if(info.nombre || info.marca || info.prod || info.ori || info.etiquetaL){
+      guardarProductoCentralLQDD(codigo,info).catch(err=>console.warn("LQDD: no se pudo actualizar la ficha central",err));
     }
   }
 }
@@ -1897,8 +1950,10 @@ if(verIngredientesBtn){
 
       if(codigoActual){
         const h=cargarHist();
-        const i=h.findIndex(x=>String(x.codigo)===String(codigoActual));
+        const codigoN=normalizarCodigoProducto(codigoActual);
+        const i=h.findIndex(x=>normalizarCodigoProducto(x.codigo)===codigoN);
         if(i>=0){
+          h[i].codigo=codigoN;
           h[i].etiqueta=Object.assign({},r);
           h[i].snapshot=h[i].snapshot||{};
           h[i].snapshot.info=h[i].snapshot.info||{};
