@@ -456,6 +456,29 @@ async function ubicarLugar(texto,paisHint){
   finally{ clearTimeout(t); }
 }
 
+async function buscarPorCodigoEnBusquedaInterna(codigo, campos){
+  const cod=String(codigo||"").trim();
+  if(!cod) return [];
+  const bases=["openfoodfacts","openbeautyfacts","openproductsfacts"];
+  const camposConCode="code,"+campos;
+  const urls=bases.map(b=>"https://world."+b+".org/cgi/search.pl?action=process&json=1&search_simple=1&page_size=10&fields="+encodeURIComponent(camposConCode)+"&search_terms="+encodeURIComponent(cod));
+  const respuestas=await Promise.all(urls.map(async u=>{
+    const ac=new AbortController(), t=setTimeout(()=>ac.abort(),9000);
+    try{
+      const r=await fetch(u,{signal:ac.signal});
+      if(!r.ok) return null;
+      return await r.json();
+    }catch(e){ return null; } finally{ clearTimeout(t); }
+  }));
+  const encontrados=[];
+  for(const d of respuestas){
+    for(const p of ((d&&d.products)||[])){
+      if(p && String(p.code||"")===cod) encontrados.push(p);
+    }
+  }
+  return encontrados;
+}
+
 async function buscarProducto(codigo){
   const bases=["openfoodfacts","openbeautyfacts","openproductsfacts"];
   const campos="product_name,abbreviated_product_name,generic_name,brands,quantity,product_quantity,product_quantity_unit,categories,categories_tags,manufacturing_places,manufacturing_places_tags,cities_tags,origins,origins_tags,origin,labels,labels_tags,emb_codes,emb_codes_tags,emb_codes_orig,packaging_text,customer_service,producer,stores,link,knowledge_panels,ingredients_text,ingredients_text_es,allergens,allergens_tags";
@@ -470,8 +493,22 @@ async function buscarProducto(codigo){
     }catch(e){return null;} finally{clearTimeout(t);}
   }));
 
-  const ps=res.filter(Boolean);
+  let ps=res.filter(Boolean);
   const has=v=>v&&((Array.isArray(v)&&v.length)||(!Array.isArray(v)&&String(v).trim()));
+
+  // Refuerzo interno: si la consulta directa por código no encontró el producto,
+  // o lo encontró pero le faltan marca/nombre/fabricación, se busca ese MISMO
+  // código dentro de las bases abiertas (por texto, no por endpoint exacto),
+  // porque a veces un espejo tiene el producto indexado en el buscador pero no
+  // en la consulta directa. Nunca se muestra ninguna lista de comparación: solo
+  // se aceptan resultados cuyo código coincide exactamente con el escaneado.
+  const necesitaRefuerzo = !ps.length || !ps.some(p=>has(p.brands)) || !ps.some(p=>has(p.product_name));
+  if(necesitaRefuerzo){
+    try{
+      const extra=await buscarPorCodigoEnBusquedaInterna(codigo, campos);
+      if(extra.length) ps=ps.concat(extra);
+    }catch(e){ /* si falla, seguimos solo con lo que ya teníamos */ }
+  }
   const score=p=>[
     "product_name","brands","generic_name","quantity","categories",
     "manufacturing_places","manufacturing_places_tags","emb_codes",
