@@ -936,7 +936,7 @@ if(verIngredientesBtn){
     ["Madrid","España"],["Barcelona","España"],["Valencia","España"],["Sevilla","España"],
     ["Zaragoza","España"],["Málaga","España"],["Murcia","España"],["Palma de Mallorca","España"],
     ["Palma","España"],["Bilbao","España"],["Alicante","España"],["Córdoba","España"],
-    ["Valladolid","España"],["Vigo","España"],["Gijón","España"],["Granada","España"],
+    ["Valladolid","España"],["Vigo","España"],["Gijón","España"],["Granada","España"],["Loja","España"],["Motril","España"],["Baza","España"],["Guadix","España"],
     ["Vitoria","España"],["Elche","España"],["Oviedo","España"],["Badalona","España"],
     ["Cartagena","España"],["Terrassa","España"],["Tarrasa","España"],["Jerez de la Frontera","España"],
     ["Jerez","España"],["Sabadell","España"],["Móstoles","España"],["Alcalá de Henares","España"],
@@ -1072,7 +1072,7 @@ if(verIngredientesBtn){
     if(alMatch) r.alergenos=alMatch[1].replace(/\s+/g," ").trim();
 
     // Dirección: solo se interpreta como dirección, nunca como prueba de fabricación.
-    const addr=/((?:c\/|c\.|calle|avenida|av\.|paseo|pasaje|pje\.|callejón|plaza|camino|carretera|finca|domicilio|address|street|road|avenue)\s+[^\n]+)/i.exec(raw);
+    const addr=/((?:c\/|c\.|calle|avenida|av\.|paseo|pasaje|pje\.|callejón|plaza|camino|carretera|finca|domicilio|parque|parque empresarial|parque industrial|polígono|poligono|pol\.\s*ind\.|urbanización|urbanizacion|urb\.|barrio|paraje|partida|km\.?\s*\d|address|street|road|avenue|highway)\s+[^\n]+)/i.exec(raw);
     if(addr) r.direccion=addr[1].trim().replace(/\bs\/?n\b\.?/i,"s/n");
 
     // Línea explícita de país (ej. "País: España" o "Country: Spain"), aparte de "país de origen".
@@ -1081,10 +1081,12 @@ if(verIngredientesBtn){
       if(lp) r.pais=detectarPaisL(lp)||"";
     }
 
-    // Código postal español + ciudad + provincia entre paréntesis.
+    // Código postal español + ciudad + provincia entre paréntesis, coma o guion
+    // (las etiquetas usan formatos distintos: "18300 Loja, Granada", "18300 Loja
+    // (Granada)" o "18300 Loja – Granada", con guion largo).
     // Si el código empieza por 01-52, es formato español: la provincia se saca
     // directamente de la tabla oficial (PROV), no de lo que haya escrito la OCR.
-    const cp=/\b(\d{5})\s+([^,\n(]+?)(?:\s*\(([^)\n]+)\))?(?:,\s*([A-Za-zÁÉÍÓÚáéíóúÑñ ]+))?(?=\s*$|\n)/i.exec(raw);
+    const cp=/\b(\d{5})\s+([^,\-–—\n(]+?)\s*(?:\(([^)\n]+)\)|[,\-–—]\s*([A-Za-zÁÉÍÓÚáéíóúÑñ]+(?:\s[A-Za-zÁÉÍÓÚáéíóúÑñ]+)*))?(?=\s*$|\n)/i.exec(raw);
     if(cp){
       r.codigoPostal=cp[1];
       r.ciudad=(cp[2]||"").trim();
@@ -1093,7 +1095,7 @@ if(verIngredientesBtn){
         r.provincia=PROV[prefijo];
         r.pais="España";
       }else{
-        r.provincia=(cp[3]||"").trim();
+        r.provincia=(cp[3]||cp[4]||"").trim();
         if(!r.pais) r.pais=detectarPaisL(raw);
       }
     }else{
@@ -1119,6 +1121,32 @@ if(verIngredientesBtn){
         if(!r.pais) r.pais=cd.pais;
         if(!r.origen) r.origen=cd.pais;
       }
+    }
+
+    // Última red de seguridad: aunque no haya código postal ni la ciudad esté en
+    // nuestro diccionario, si el texto trae "Población – Provincia" o "Población,
+    // Provincia" (con guion, guion largo o coma) y esa provincia es una de las 52
+    // provincias españolas reales, lo aceptamos igualmente.
+    if((!r.ciudad || !r.provincia || !r.pais) && typeof PROV!=="undefined"){
+      const provincias=Object.values(PROV);
+      for(const prov of provincias){
+        const re=new RegExp("([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ'’]+(?:\\s[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ'’]+)*)\\s*[\\-–—,]\\s*"+prov.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"\\b","");
+        const m=re.exec(raw);
+        if(m){
+          if(!r.ciudad) r.ciudad=m[1].trim();
+          if(!r.provincia) r.provincia=prov;
+          if(!r.pais){ r.pais="España"; if(!r.origen) r.origen="España"; }
+          break;
+        }
+      }
+    }
+
+    // Limpieza final: quita restos de OCR sueltos al final de cada campo de texto
+    // libre (una coma o una barra que se queda colgando al final de la línea).
+    const limpiarCola=s=>String(s||"").replace(/[\s,|·•;:\-–—]+$/,"").trim();
+    for(const k of ["fabricadoEn","fabricante","envasadoEn","envasadoPor","importadoPor",
+      "procesado","distribuidoPor","etiquetadoPor","acondicionadoPor","direccion","ciudad","provincia"]){
+      r[k]=limpiarCola(r[k]);
     }
 
     return r;
