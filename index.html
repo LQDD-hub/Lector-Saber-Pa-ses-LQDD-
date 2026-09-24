@@ -244,8 +244,9 @@ function abrirHistorial(idx){
     actual.info.etiquetaL = entry.etiqueta;
   }
   window.LQDD_getCodigoActual=()=>actual&&actual.codigo;
-  pintar(true, true);
   const r = document.getElementById("resultado");
+  if(r) r.style.display="block"; // igual que hace un escaneo normal: si aún no se había mostrado, hay que hacerla visible antes de pintarla
+  pintar(true, true);
   if(r) r.scrollIntoView({behavior:"smooth", block:"start"});
 }
 function pintarHist(){
@@ -1278,6 +1279,14 @@ async function mostrar(codigo){
         };
       }
     }
+
+    // Los ingredientes/alérgenos leídos en la etiqueta también deben llegar a la
+    // ficha principal (es el mismo fallo que con la fabricación): si Open Food
+    // Facts o la base global no traían ingredientes, pero la etiqueta sí los
+    // leyó, se usan esos para que aparezca el botón de "¿Quieres saber los
+    // ingredientes?".
+    if(!info.ingredients && etiquetaGuardada.ingredientes) info.ingredients=etiquetaGuardada.ingredientes;
+    if(!info.alergenos && etiquetaGuardada.alergenos) info.alergenos=etiquetaGuardada.alergenos;
   }
   actual={codigo:codigoProducto,prefijo,info,gs1Raw}; window.LQDD_getCodigoActual=()=>actual&&actual.codigo; pintar();
 }
