@@ -241,7 +241,10 @@ function paisDe(codigo){
   return f ? f[2] : "Desconocido / código especial";
 }
 
-let vozActiva = localStorage.getItem("vozActiva") !== "0";
+let vozActiva = true;
+// La voz queda activada por defecto en LQDD. No dependemos de un valor antiguo
+// guardado en el navegador que pudiera dejar la aplicación en silencio.
+localStorage.setItem("vozActiva", "1");
 
 function actualizarBotonVoz(){
   const b = document.getElementById("vozBtn");
@@ -251,13 +254,13 @@ function actualizarBotonVoz(){
 }
 
 function hablar(texto){
-  if(!vozActiva || !texto || !('speechSynthesis' in window)) return;
+  if(!vozActiva || !texto || !('speechSynthesis' in window)) return false;
   try{
     const limpio=String(texto)
       .replace(/<[^>]*>/g," ")
       .replace(/[🟢🟡⚪📦🏷️📄⚖️🗂️🌍🏭📌⚠️📍🔎🏢🧪]/g," ")
       .replace(/\s+/g," ").trim();
-    if(!limpio) return;
+    if(!limpio) return false;
 
     // Chrome Android puede quedarse en pausa si se intenta hablar justo después
     // de una operación asíncrona (cámara/OCR/consulta de datos). Forzamos la cola
@@ -297,7 +300,31 @@ function hablar(texto){
       // Algunos Android necesitan un segundo resume después de encolar.
       setTimeout(()=>{try{speechSynthesis.resume();}catch(e){}},120);
     },250);
-  }catch(e){ console.warn("LQDD voz:",e); }
+    return true;
+  }catch(e){ console.warn("LQDD voz:",e); return false; }
+}
+
+// Lectura directa iniciada por un toque del usuario. En Android/Chrome esta es
+// la ruta más fiable porque conserva la activación del gesto del usuario.
+function leerTextoDirectoLQDD(texto){
+  if(!texto || !("speechSynthesis" in window)) return false;
+  try{
+    vozActiva=true;
+    localStorage.setItem("vozActiva","1");
+    const limpio=String(texto).replace(/<[^>]*>/g," ").replace(/[🟢🟡⚪📦🏷️📄⚖️🗂️🌍🏭📌⚠️📍🔎🏢🧪]/g," ").replace(/\s+/g," ").trim();
+    if(!limpio) return false;
+    speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(limpio);
+    u.lang="es-ES";
+    u.rate=0.9;
+    u.pitch=1;
+    u.volume=1;
+    const voces=speechSynthesis.getVoices ? speechSynthesis.getVoices() : [];
+    const v=voces.find(x=>/^es(-|_)/i.test(x.lang)) || voces.find(x=>/español|spanish/i.test(x.name||""));
+    if(v) u.voice=v;
+    speechSynthesis.speak(u);
+    return true;
+  }catch(e){ console.warn("LQDD lectura directa:",e); return false; }
 }
 
 function probarVozLQDD(){
@@ -745,6 +772,63 @@ async function enviarAportacionLQDD(codigo, info){
   }catch(e){ return false; }
 }
 
+// Guarda la lectura completa de la etiqueta en la base central LQDD.
+// La etiqueta queda asociada al código de barras y no al teléfono.
+async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
+  try{
+    const cod=String(codigo||"").replace(/\D/g,"");
+    if(!cod || !etiqueta || typeof etiqueta!=="object") return false;
+
+    // Evitamos crear registros idénticos si la etiqueta ya está en la base central.
+    const consulta="/rest/v1/contributions?select=dato&codigo=eq."+encodeURIComponent(cod)+"&tipo_dato=eq.etiqueta_ocr&limit=1";
+    const existente=await lqddSupabaseFetch(consulta);
+    if(existente.ok){
+      const datos=await existente.json().catch(()=>[]);
+      if(Array.isArray(datos) && datos.length) return true;
+    }
+
+    const payload={
+      codigo:cod,
+      tipo_dato:"etiqueta_ocr",
+      dato:JSON.stringify({
+        version:1,
+        codigo:cod,
+        etiqueta:Object.assign({},etiqueta),
+        fuente_lectura:"OCR LQDD Scanner"
+      }),
+      fuente:"LQDD Scanner",
+      estado:"pendiente"
+    };
+    const r=await lqddSupabaseFetch("/rest/v1/contributions",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Prefer":"return=minimal"},
+      body:JSON.stringify(payload)
+    });
+    return r.ok;
+  }catch(e){
+    console.warn("LQDD: no se pudo guardar la etiqueta en la base central",e);
+    return false;
+  }
+}
+
+// Recupera una etiqueta OCR ya guardada por otro teléfono.
+async function consultarEtiquetaCentralLQDD(codigo){
+  try{
+    const cod=String(codigo||"").replace(/\D/g,"");
+    if(!cod) return null;
+    const path="/rest/v1/contributions?select=dato&codigo=eq."+encodeURIComponent(cod)+"&tipo_dato=eq.etiqueta_ocr&limit=1";
+    const r=await lqddSupabaseFetch(path);
+    if(!r.ok) return null;
+    const data=await r.json();
+    if(!Array.isArray(data) || !data[0] || !data[0].dato) return null;
+    let dato=data[0].dato;
+    if(typeof dato==="string") dato=JSON.parse(dato);
+    return dato && dato.etiqueta && typeof dato.etiqueta==="object" ? dato.etiqueta : null;
+  }catch(e){
+    return null;
+  }
+}
+
 async function buscarProducto(codigo){
   // Primero consultamos el conocimiento mundial de LQDD.
   // Después contrastamos/completamos con las bases abiertas que ya utiliza la app.
@@ -933,7 +1017,13 @@ async function mostrar(codigo){
   const info=await buscarProducto(codigoProducto);
   // Recuperar automáticamente la etiqueta que ya se leyó anteriormente.
   // Primero usamos la copia rápida por código y después el historial como respaldo.
-  const etiquetaGuardada=cargarEtiquetaGuardada(codigoProducto);
+  // Primero usamos la copia local. Si este teléfono nunca leyó la etiqueta,
+  // consultamos la base central LQDD para recuperar lo que haya guardado otro móvil.
+  let etiquetaGuardada=cargarEtiquetaGuardada(codigoProducto);
+  if(!etiquetaGuardada){
+    etiquetaGuardada=await consultarEtiquetaCentralLQDD(codigoProducto);
+    if(etiquetaGuardada) guardarEtiquetaPorCodigo(codigoProducto,etiquetaGuardada);
+  }
   if(etiquetaGuardada){
     info.etiquetaL=Object.assign({},etiquetaGuardada);
   }
@@ -1355,7 +1445,7 @@ if(verIngredientesBtn){
       const ad=it.address;
       return {
         ciudad:ad.city||ad.town||ad.village||ad.municipality||"",
-        provincia:ad.state||ad.province||ad.county||"",
+        provincia:ad.province||ad.county||ad.state||"",
         pais:ad.country||""
       };
     }catch(e){
@@ -1390,7 +1480,13 @@ if(verIngredientesBtn){
       }
     }
 
-    // 2) Dirección completa y combinaciones ciudad/provincia.
+    // 2) La localidad detectada por OCR se comprueba SIEMPRE en el callejero.
+    // No hace falta que esté previamente en nuestro vocabulario: si Tesseract lee
+    // "Málaga", "Loja", "Oliva" o cualquier otro pueblo, se consulta
+    // directamente al mapa para comprobar qué localidad es y a qué provincia pertenece.
+    if(datos.ciudad) anadir(datos.ciudad);
+
+    // Dirección completa y combinaciones ciudad/provincia/código postal.
     if(datos.direccion){
       anadir((datos.codigoPostal?' '+datos.codigoPostal:'')+' '+datos.direccion);
     }
@@ -1421,8 +1517,12 @@ if(verIngredientesBtn){
     }
     if(!mejor) return null;
 
+    // El mapa valida la localidad, pero no debe sustituir una provincia que la
+    // propia etiqueta ya ha declarado claramente. Ejemplo: OSM puede devolver
+    // "Andalucía" como state y "Granada" como county; para nosotros la
+    // provincia correcta es Granada. La declaración explícita de la etiqueta manda.
     datos.ciudad=mejor.ciudad;
-    if(mejor.provincia) datos.provincia=mejor.provincia;
+    if(!datos.provincia && mejor.provincia) datos.provincia=mejor.provincia;
     datos.pais=mejor.pais;
     datos.mapaMundial=mejor.pais+' ('+mejor.ciudad+(mejor.provincia?', '+mejor.provincia:'')+')';
     return mejor;
@@ -1656,12 +1756,33 @@ if(verIngredientesBtn){
     vozAdd("Según el mapa mundial",r.mapaMundial);
     vozAdd("Ingredientes",r.ingredientes);
     vozAdd("Alérgenos",r.alergenos);
+
+    // Lectura manual directa: en Android/Chrome el toque del usuario desbloquea
+    // speechSynthesis incluso cuando la lectura automática después del OCR está bloqueada.
+    const cajaVoz=E("lqddTextoEtiqueta");
+    if(cajaVoz && vozEtiqueta.length){
+      const b=document.createElement("button");
+      b.id="lqddLeerEtiquetaBtn";
+      b.type="button";
+      b.textContent="🔊 LEER TODA LA ETIQUETA";
+      b.style.cssText="display:block;width:100%;margin:14px 0 4px;padding:14px 10px;border:0;border-radius:12px;background:#b5121b;color:#ffd400;font-size:1rem;font-weight:900;cursor:pointer;";
+      const textoCompleto="Información de la etiqueta. "+vozEtiqueta.join(". ");
+      b.onclick=()=>leerTextoDirectoLQDD(textoCompleto);
+      cajaVoz.appendChild(b);
+    }
+
+    // Intento automático. Si el navegador lo bloquea por venir de una operación
+    // asíncrona, el botón anterior permite iniciar la lectura con un toque.
     if(vozEtiqueta.length && typeof hablar==="function") hablar("Información de la etiqueta. "+vozEtiqueta.join(". "));
 
     if(window.renderDatosEtiquetaGuardados) window.renderDatosEtiquetaGuardados(r);
     try{
       const codigoActual = window.LQDD_getCodigoActual ? window.LQDD_getCodigoActual() : null;
-      if(codigoActual) guardarEtiquetaPorCodigo(codigoActual,r);
+      if(codigoActual){
+        guardarEtiquetaPorCodigo(codigoActual,r);
+        // Guardado central: desde ahora la etiqueta queda disponible para otros teléfonos.
+        guardarEtiquetaCentralLQDD(codigoActual,r).catch(()=>{});
+      }
       // La etiqueta queda guardada incluso aunque el historial todavía no tenga
       // una entrada para ese código. Si existe, además actualizamos el historial.
 
@@ -1790,6 +1911,15 @@ if(verIngredientesBtn){
           ? "<b>📝 Texto detectado:</b><div style='white-space:pre-wrap;margin-top:6px'>"+escL(limpio.slice(0,3500))+"</div>"
           : "<b>⚠️ La foto no contiene texto legible.</b><br><small>Haz la foto más cerca, recta y con buena luz.</small>";
         if(limpio && typeof hablar==="function") hablar("Texto detectado en la etiqueta: "+limpio.slice(0,3500));
+        const cajaTexto=E("lqddTextoEtiqueta");
+        if(cajaTexto && limpio){
+          const b=document.createElement("button");
+          b.type="button";
+          b.textContent="🔊 Leer texto detectado";
+          b.style.cssText="display:block;width:100%;margin:12px 0 4px;padding:13px 10px;border:0;border-radius:12px;background:#b5121b;color:#ffd400;font-size:1rem;font-weight:800;cursor:pointer;";
+          b.onclick=()=>leerTextoDirectoLQDD("Texto detectado en la etiqueta. "+limpio.slice(0,3500));
+          cajaTexto.appendChild(b);
+        }
         E("lqddIngredientesEtiqueta").style.display="none";
         E("lqddIngredientesBox").style.display="none";
       }else{
