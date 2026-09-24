@@ -776,13 +776,32 @@ async function enviarAportacionLQDD(codigo, info){
 // Se usan como semilla de recuperación y, si faltan en Supabase, la app intenta
 // sincronizarlos automáticamente con la base central.
 const LQDD_ETIQUETAS_SEMILLA = {
-  "842359272005": {
-    envasadoPor: "PARQUE LA PRESA, S.A. 3",
+  // GTIN real visible en la etiqueta/botella de Font Natura 1,5 L.
+  "8429359272005": {
+    envasadoPor: "Parque La Presa, S.A.",
     origen: "España",
-    direccion: "PARQUE LA PRESA, S.A. 3",
+    direccion: "Finca La Presa, s/n - 18300 Loja - Granada",
     ciudad: "Loja",
     provincia: "Granada",
-    pais: "España"
+    pais: "España",
+    producto: "Agua Mineral Natural Manantial Font Natura",
+    manantial: "Font Natura",
+    lugar: "Loja - Granada",
+    envasadoEn: "Loja, Granada, España"
+  },
+  // Alias antiguo que habíamos introducido por error; se conserva para no
+  // romper historiales ya guardados, pero el código correcto es el anterior.
+  "842359272005": {
+    envasadoPor: "Parque La Presa, S.A.",
+    origen: "España",
+    direccion: "Finca La Presa, s/n - 18300 Loja - Granada",
+    ciudad: "Loja",
+    provincia: "Granada",
+    pais: "España",
+    producto: "Agua Mineral Natural Manantial Font Natura",
+    manantial: "Font Natura",
+    lugar: "Loja - Granada",
+    envasadoEn: "Loja, Granada, España"
   }
 };
 
@@ -1080,13 +1099,17 @@ async function mostrar(codigo){
   let etiquetaGuardada=await consultarEtiquetaCentralLQDD(codigoProducto);
   if(etiquetaGuardada){
     guardarEtiquetaPorCodigo(codigoProducto,etiquetaGuardada);
-    if(etiquetaGuardada._fuenteSemilla){
-      // Intentamos dejar la ficha definitivamente en Supabase para que todos
-      // los teléfonos la reciban desde la base central.
-      sincronizarEtiquetaSemillaLQDD(codigoProducto);
-    }
   }else{
-    etiquetaGuardada=cargarEtiquetaGuardada(codigoProducto);
+    // Si Supabase todavía no tiene la ficha, usamos la semilla central de LQDD
+    // para este producto y la sincronizamos automáticamente.
+    const semilla=lqddEtiquetaSemilla(codigoProducto);
+    if(semilla){
+      etiquetaGuardada=semilla;
+      guardarEtiquetaPorCodigo(codigoProducto,etiquetaGuardada);
+      sincronizarEtiquetaSemillaLQDD(codigoProducto);
+    }else{
+      etiquetaGuardada=cargarEtiquetaGuardada(codigoProducto);
+    }
   }
   if(etiquetaGuardada){
     info.etiquetaL=Object.assign({},etiquetaGuardada);
@@ -1899,8 +1922,9 @@ if(verIngredientesBtn){
     };
   }
 
-  function prepararImagenEtiquetaL(file, conContraste){
-    if(conContraste===undefined) conContraste=true;
+  // Preprocesado OCR LQDD: genera imágenes optimizadas para texto pequeño de etiquetas.
+  // No sustituye la foto original; crea copias ligeras para Tesseract.
+  function prepararVariantesEtiquetaL(file){
     return new Promise((resolve,reject)=>{
       const fr=new FileReader();
       fr.onerror=()=>reject(new Error("No se pudo abrir la foto"));
@@ -1908,29 +1932,57 @@ if(verIngredientesBtn){
         const img=new Image();
         img.onerror=()=>reject(new Error("La imagen no es válida"));
         img.onload=()=>{
-          const max=1800;
-          const escala=Math.min(1,max/Math.max(img.naturalWidth||img.width,img.naturalHeight||img.height));
-          const w=Math.max(1,Math.round((img.naturalWidth||img.width)*escala));
-          const h=Math.max(1,Math.round((img.naturalHeight||img.height)*escala));
-          const c=document.createElement("canvas"); c.width=w; c.height=h;
-          const x=c.getContext("2d",{willReadFrequently:true});
-          x.drawImage(img,0,0,w,h);
-          if(conContraste){
+          const srcW=img.naturalWidth||img.width, srcH=img.naturalHeight||img.height;
+          // Para OCR damos más tamaño al texto, pero limitamos memoria en móviles.
+          const maxSide=2400;
+          const scale=Math.min(2.0, maxSide/Math.max(srcW,srcH));
+          const w=Math.max(1,Math.round(srcW*scale));
+          const h=Math.max(1,Math.round(srcH*scale));
+          const base=document.createElement("canvas"); base.width=w;base.height=h;
+          const ctx=base.getContext("2d",{willReadFrequently:true});
+          ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality="high";
+          ctx.drawImage(img,0,0,w,h);
+
+          function dataUrl(mode){
+            const c=document.createElement("canvas"); c.width=w;c.height=h;
+            const x=c.getContext("2d",{willReadFrequently:true});
+            x.drawImage(base,0,0);
             const d=x.getImageData(0,0,w,h), a=d.data;
-            // Mejora el contraste sin eliminar completamente el color de la etiqueta.
             for(let i=0;i<a.length;i+=4){
               const g=0.299*a[i]+0.587*a[i+1]+0.114*a[i+2];
-              const v=Math.max(0,Math.min(255,(g-128)*1.35+128));
+              let v=g;
+              if(mode==="contrast") v=Math.max(0,Math.min(255,(g-128)*1.55+128));
+              else if(mode==="threshold") v=g>150?255:0;
+              else if(mode==="soft") v=Math.max(0,Math.min(255,(g-128)*1.15+128));
               a[i]=a[i+1]=a[i+2]=v;
             }
             x.putImageData(d,0,0);
+            return c.toDataURL("image/jpeg",0.94);
           }
-          resolve(c.toDataURL("image/jpeg",0.92));
+
+          // Variante 0 conserva el color: útil cuando el texto blanco está sobre fondo azul.
+          const original=base.toDataURL("image/jpeg",0.94);
+          resolve([
+            {src:original, name:"color", psm:"6"},
+            {src:dataUrl("contrast"), name:"contraste", psm:"6"},
+            {src:dataUrl("soft"), name:"suave", psm:"11"},
+            {src:dataUrl("threshold"), name:"blanco_negro", psm:"11"}
+          ]);
         };
         img.src=fr.result;
       };
       fr.readAsDataURL(file);
     });
+  }
+
+  function calidadOCRL(ret,texto,datos){
+    const conf=Number(ret&&ret.data&&ret.data.confidence)||0;
+    let campos=0;
+    ["fabricadoEn","fabricante","envasadoEn","envasadoPor","importadoPor","procesado","distribuidoPor","etiquetadoPor","acondicionadoPor","origen","direccion","ciudad","provincia","pais","codigoPostal","ingredientes","alergenos"].forEach(k=>{if(datos&&String(datos[k]||"").trim()) campos++;});
+    const longitud=String(texto||"").replace(/\s/g,"").length;
+    // Preferimos texto legible + campos estructurados, no una pasada que sólo
+    // haya producido muchas letras basura.
+    return conf + campos*18 + Math.min(20,longitud/80);
   }
 
 
@@ -1945,36 +1997,54 @@ if(verIngredientesBtn){
     try{
       if(!file) return;
       if(!window.Tesseract) throw new Error("OCR no disponible");
-      const imagen=await prepararImagenEtiquetaL(file);
-      barra.style.width="5%";pct.textContent="5%";
+
+      const variantes=await prepararVariantesEtiquetaL(file);
+      barra.style.width="8%";pct.textContent="8%";
 
       worker=await Tesseract.createWorker("spa+eng",1,{logger:m=>{
         if(m && typeof m.progress==="number"){
-          const p=Math.max(5,Math.min(96,Math.round(m.progress*100)));
+          const p=Math.max(8,Math.min(96,Math.round(m.progress*100)));
           barra.style.width=p+"%";pct.textContent=p+"%";
         }
       }});
-      try{await worker.setParameters({tessedit_pageseg_mode:"6",preserve_interword_spaces:"1",user_defined_dpi:"300"});}catch(_e){}
+      try{await worker.setParameters({preserve_interword_spaces:"1",user_defined_dpi:"300",language_model_penalty_non_freq_dict_word:"0.05"});}catch(_e){}
 
-      let ret=await worker.recognize(imagen);
-      let texto=String(ret&&ret.data&&ret.data.text||"");
-      let datos=extraerEtiquetaL(texto);
+      let mejor={score:-1,texto:"",datos:null,conf:0};
+      const total=variantes.length;
 
-      // Segunda pasada, más suave (sin realzar tanto el contraste) pero igual de
-      // ligera que la primera, si esta no encontró datos claros. Nunca se usa la
-      // foto original sin comprimir: eso era lo que podía dejar la app colgada.
-      if(!hayDatoEtiquetaL(datos)){
-        barra.style.width="55%";pct.textContent="55%";
-        const imagen2=await prepararImagenEtiquetaL(file,false);
-        ret=await worker.recognize(imagen2);
-        texto=String(ret&&ret.data&&ret.data.text||"");
-        datos=extraerEtiquetaL(texto);
+      for(let i=0;i<variantes.length;i++){
+        const v=variantes[i];
+        try{await worker.setParameters({tessedit_pageseg_mode:v.psm});}catch(_e){}
+        const ret=await worker.recognize(v.src);
+        const texto=String(ret&&ret.data&&ret.data.text||"");
+        const datos=extraerEtiquetaL(texto);
+        const score=calidadOCRL(ret,texto,datos);
+        if(score>mejor.score) mejor={score,texto,datos,conf:Number(ret&&ret.data&&ret.data.confidence)||0};
+        barra.style.width=Math.round(10+((i+1)/total)*70)+"%";
+        pct.textContent=Math.round(10+((i+1)/total)*70)+"%";
+
+        // Si ya tenemos una lectura estructurada de alta confianza, no gastamos
+        // más tiempo del necesario en el móvil.
+        if(mejor.datos && (mejor.datos.envasadoPor||mejor.datos.fabricante||mejor.datos.ciudad||mejor.datos.codigoPostal) && mejor.conf>=82) break;
       }
 
-      // IMPORTANTE: la ciudad nunca se acepta solo porque Tesseract haya leído
-      // una palabra que coincide con nuestro diccionario. Se valida contra un
-      // callejero real. Así "Loja" se puede identificar como Loja (Granada),
-      // mientras que una lectura basura como "a mo" no se convierte en ciudad.
+      let texto=mejor.texto;
+      let datos=mejor.datos || extraerEtiquetaL(texto);
+
+      // Una segunda lectura sólo de la mejor variante con PSM 4 puede recuperar
+      // líneas de etiquetas que Tesseract haya unido incorrectamente.
+      if(!datos.envasadoPor && !datos.fabricante && !datos.ciudad && !datos.direccion){
+        const v=variantes[1]||variantes[0];
+        try{await worker.setParameters({tessedit_pageseg_mode:"4"});}catch(_e){}
+        const ret2=await worker.recognize(v.src);
+        const t2=String(ret2&&ret2.data&&ret2.data.text||"");
+        const d2=extraerEtiquetaL(t2);
+        if(calidadOCRL(ret2,t2,d2)>calidadOCRL({data:{confidence:mejor.conf}},texto,datos)){
+          texto=t2;datos=d2;
+        }
+      }
+
+      // Validación geográfica: sólo después de seleccionar la mejor lectura.
       if(datos.ciudad || datos.codigoPostal || datos.direccion || datos.provincia){
         barra.style.width="85%";pct.textContent="🌍";
         const mapaEstado=E("lqddMapaEstado"), btnCancelar=E("lqddCancelarMapa");
@@ -1982,14 +2052,9 @@ if(verIngredientesBtn){
         btnCancelar.onclick=cancelarBusquedaMapaMundialL;
         const geo=await validarLocalidadEtiquetaL(datos,texto);
         mapaEstado.style.display="none";
-        if(!geo){
-          // Si el mapa no confirma la localidad, eliminamos la lectura dudosa.
-          // Conservamos únicamente provincia/país que tengan otra evidencia clara.
-          if(!datos.codigoPostal) datos.ciudad="";
-        }
+        if(!geo && !datos.codigoPostal) datos.ciudad="";
       }
 
-      // Si OCR sí leyó texto pero no encontró una etiqueta estándar, mostramos el texto útil.
       if(!hayDatoEtiquetaL(datos)){
         const limpio=limpiarOCR(texto);
         E("lqddTextoEtiqueta").innerHTML=limpio
@@ -1999,8 +2064,7 @@ if(verIngredientesBtn){
         const cajaTexto=E("lqddTextoEtiqueta");
         if(cajaTexto && limpio){
           const b=document.createElement("button");
-          b.type="button";
-          b.textContent="🔊 Leer texto detectado";
+          b.type="button";b.textContent="🔊 Leer texto detectado";
           b.style.cssText="display:block;width:100%;margin:12px 0 4px;padding:13px 10px;border:0;border-radius:12px;background:#b5121b;color:#ffd400;font-size:1rem;font-weight:800;cursor:pointer;";
           b.onclick=()=>leerTextoDirectoLQDD("Texto detectado en la etiqueta. "+limpio.slice(0,3500));
           cajaTexto.appendChild(b);
@@ -2017,16 +2081,14 @@ if(verIngredientesBtn){
     }catch(e){
       console.error("LQDD OCR:",e);
       barra.style.width="100%";pct.textContent="Error";
-      const lento=e && /demasiado lenta/i.test(e.message||"");
-      E("lqddTextoEtiqueta").innerHTML=lento
-        ? "<b>⚠️ La lectura ha tardado demasiado y se ha detenido.</b><br><small>Prueba con una foto más pequeña, más cerca de la etiqueta y con buena luz.</small>"
-        : "<b>⚠️ No se pudo leer la etiqueta.</b><br><small>Comprueba la conexión a Internet y haz una foto nítida, de cerca y con buena iluminación.</small>";
+      E("lqddTextoEtiqueta").innerHTML="<b>⚠️ No se pudo leer correctamente la etiqueta.</b><br><small>Haz una foto frontal, enfocada, con toda la etiqueta visible y buena luz.</small>";
       res.style.display="block";
       setTimeout(()=>{estado.style.display="none";},700);
     }finally{
       if(worker){try{await worker.terminate();}catch(_e){}}
     }
   }
+
 
   E("lqddBtnEtiqueta").onclick=()=>E("lqddFotoEtiqueta").click();
   E("lqddFotoEtiqueta").onchange=ev=>{
