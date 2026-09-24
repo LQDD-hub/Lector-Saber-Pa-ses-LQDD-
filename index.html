@@ -1252,6 +1252,32 @@ async function mostrar(codigo){
     info.etiquetaL=Object.assign({},etiquetaGuardada);
     // Una lectura explícita de la etiqueta tiene prioridad sobre un dato genérico de productor.
     if(etiquetaGuardada.fabricante) info.fabricante=etiquetaGuardada.fabricante;
+
+    // Si ya tenemos una etiqueta leída (propia o de la base global compartida
+    // LQDD) y todavía no hay ninguna fabricación reconocida por otras fuentes,
+    // la ficha principal debe reflejarlo en vez de decir "no disponible":
+    // ya sabemos lo que pone en el envase de este producto.
+    if(!info.prod){
+      const declarado=etiquetaGuardada.fabricadoEn||etiquetaGuardada.envasadoEn||"";
+      if(declarado){
+        // Declaración explícita en la etiqueta ("Fabricado en..." / "Envasado en...").
+        info.prod={
+          pais:declarado,
+          nivel:"confirmado",
+          fuente:"Etiqueta fotografiada",
+          detalle:etiquetaGuardada.fabricadoEn?"Fabricado en: "+etiquetaGuardada.fabricadoEn:"Envasado en: "+etiquetaGuardada.envasadoEn
+        };
+      }else if(etiquetaGuardada.pais){
+        // Solo hay una pista de ciudad/código postal/mapa mundial, no una
+        // declaración explícita: se muestra, pero como asociado, no confirmado.
+        info.prod={
+          pais:etiquetaGuardada.pais,
+          nivel:"asociado",
+          fuente:"Etiqueta fotografiada (pista de ubicación)",
+          detalle:[etiquetaGuardada.ciudad,etiquetaGuardada.provincia].filter(Boolean).join(", ")||"Dato leído de la etiqueta del producto"
+        };
+      }
+    }
   }
   actual={codigo:codigoProducto,prefijo,info,gs1Raw}; window.LQDD_getCodigoActual=()=>actual&&actual.codigo; pintar();
 }
