@@ -15,7 +15,9 @@
   .cab img{width:76px;height:76px;flex:none;filter:drop-shadow(0 2px 4px rgba(0,0,0,.5))}
   .cab h1{font-size:clamp(1.3rem,7vw,1.8rem);letter-spacing:.06em;white-space:nowrap;margin:0;line-height:1.1;color:#F1BF00;text-shadow:0 2px 4px rgba(0,0,0,.4)}
   .cab p{margin:4px 0 0;font-size:.8rem;line-height:1.25;color:#fff}
-  #lector{width:100%;background:#000;border-radius:12px;overflow:hidden;min-height:60px}
+  #lector{width:320px;height:150px;margin:10px auto 0;background:#000;border-radius:12px;overflow:hidden;min-height:0;position:relative;box-shadow:0 2px 8px rgba(0,0,0,.25)}
+  #lector video{width:100%!important;height:100%!important;object-fit:cover;display:block}
+  #lector canvas{max-width:100%;}
   button{width:100%;padding:12px;margin-top:10px;font-size:1rem;border:0;border-radius:10px;background:#AA151B;color:#F1BF00;font-weight:bold}
   .fila{display:flex;gap:8px;margin-top:10px}
   input{flex:1;padding:12px;font-size:1rem;border:1px solid #bbb;border-radius:10px}
@@ -696,14 +698,22 @@ const LQDD_SUPABASE_KEY = "sb_publishable_J8Vb_pIfMZgtFOe9CdQlGg_T1HCx4Ji";
 async function lqddSupabaseFetch(path, options={}){
   const ac=new AbortController();
   const t=setTimeout(()=>ac.abort(),7000);
+  const method=String(options.method||"GET").toUpperCase();
+  let url=LQDD_SUPABASE_URL + path;
+  // Las consultas GET de PostgREST pueden quedar en caché en algunos
+  // navegadores/proxies. Para una ficha que acabamos de SOBRESCRIBIR eso es
+  // inaceptable: cada escaneo debe poder ver la revisión más reciente.
+  if(method==="GET") url += (url.includes("?")?"&":"?") + "_lqdd_ts=" + Date.now();
   try{
-    return await fetch(LQDD_SUPABASE_URL + path, {
+    return await fetch(url, {
       ...options,
+      cache: method==="GET" ? "no-store" : (options.cache||"default"),
       signal:ac.signal,
       headers:{
         "apikey":LQDD_SUPABASE_KEY,
         "Authorization":"Bearer "+LQDD_SUPABASE_KEY,
         "Accept":"application/json",
+        ...(method==="GET"?{"Cache-Control":"no-cache"}:{}),
         ...(options.headers||{})
       }
     });
@@ -886,6 +896,13 @@ async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
         throw new Error("No se pudo SOBRESCRIBIR la etiqueta en Supabase (HTTP "+r.status+"). "+detalle.slice(0,180));
       }
     }
+    // Verificación real: no mostramos “SOBRESCRITA” hasta comprobar que la
+    // lectura central devuelve exactamente la revisión que acabamos de guardar.
+    const ver=await consultarEtiquetaCentralLQDD(cod);
+    const revGuardada=Number(JSON.parse(payload.dato).revision)||0;
+    if(!ver || Number(ver._revisionCentral||0)!==revGuardada){
+      throw new Error("La base aceptó la escritura, pero la lectura posterior no devuelve la nueva revisión. No se marcará como sobrescrita.");
+    }
     return true;
   }
 
@@ -897,6 +914,11 @@ async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
   if(!r.ok){
     const detalle=await r.text().catch(()=>"");
     throw new Error("No se pudo guardar la etiqueta en Supabase (HTTP "+r.status+"). "+detalle.slice(0,180));
+  }
+  const ver=await consultarEtiquetaCentralLQDD(cod);
+  const revGuardada=Number(JSON.parse(payload.dato).revision)||0;
+  if(!ver || Number(ver._revisionCentral||0)!==revGuardada){
+    throw new Error("La base aceptó la escritura, pero la lectura posterior no devuelve la nueva revisión. No se marcará como guardada.");
   }
   return true;
 }
@@ -947,17 +969,20 @@ async function consultarEtiquetaCentralLQDD(codigo){
   const cod=normalizarCodigoProducto(codigo);
   if(!cod) return null;
 
-  // Una sola petición para el GTIN normalizado y su antiguo formato de 12 dígitos.
-  // Antes hacíamos una petición por formato, lo que añadía latencia en cada escaneo.
-  const candidatas=[];
-  try{
-    const compatibles=codigosCompatiblesLQDD(cod);
-    const filtro=compatibles.length===1
-      ? "codigo=eq."+encodeURIComponent(compatibles[0])
-      : "codigo=in.("+compatibles.map(encodeURIComponent).join(",")+")";
-    const base="/rest/v1/contributions?select=id,dato,codigo&"+filtro+"&tipo_dato=eq.etiqueta_ocr";
-    const r=await lqddSupabaseFetch(base);
-    if(r.ok){
+  // La base central es la autoridad. Hacemos una consulta sin caché y, si
+  // hay un fallo transitorio, un segundo intento corto antes de permitir que
+  // una copia vieja del teléfono vuelva a aparecer.
+  const compatibles=codigosCompatiblesLQDD(cod);
+  const filtro=compatibles.length===1
+    ? "codigo=eq."+encodeURIComponent(compatibles[0])
+    : "codigo=in.("+compatibles.map(encodeURIComponent).join(",")+")";
+  const base="/rest/v1/contributions?select=id,dato,codigo&"+filtro+"&tipo_dato=eq.etiqueta_ocr";
+
+  for(let intento=0; intento<2; intento++){
+    const candidatas=[];
+    try{
+      const r=await lqddSupabaseFetch(base,{cache:"no-store"});
+      if(!r.ok) throw new Error("HTTP "+r.status);
       const data=await r.json().catch(()=>[]);
       if(Array.isArray(data)) for(const row of data){
         if(!row || !row.dato) continue;
@@ -970,13 +995,18 @@ async function consultarEtiquetaCentralLQDD(codigo){
           });
         }catch(_e){}
       }
+      candidatas.sort((a,b)=>(b.revision-a.revision)||(b.version-a.version)||(Number(b.id)||0)-(Number(a.id)||0));
+      if(candidatas[0]) return Object.assign({},candidatas[0].etiqueta,{_fuenteCentral:true,_revisionCentral:candidatas[0].revision});
+      return null;
+    }catch(e){
+      console.warn("LQDD: consulta central intento "+(intento+1),e);
+      if(intento===0) await new Promise(resolve=>setTimeout(resolve,180));
     }
-    candidatas.sort((a,b)=>(b.revision-a.revision)||(b.version-a.version));
-    if(candidatas[0]) return Object.assign({},candidatas[0].etiqueta,{_fuenteCentral:true});
-  }catch(e){
-    console.warn("LQDD: no se pudo consultar la etiqueta central",e);
   }
 
+  // Sólo usamos la semilla incorporada si no existe una ficha central.
+  // No recuperamos aquí el localStorage: así una consulta central fallida no
+  // puede resucitar silenciosamente una etiqueta antigua de hace años.
   const semilla=lqddEtiquetaSemilla(cod);
   if(semilla) return Object.assign({},semilla,{_fuenteSemilla:true});
   return null;
@@ -1389,7 +1419,7 @@ async function iniciarNativo(){
     const detector=new BarcodeDetector({formats:formatos});
     videoNativo=document.createElement("video");
     videoNativo.setAttribute("autoplay",""); videoNativo.setAttribute("muted",""); videoNativo.setAttribute("playsinline","");
-    videoNativo.style.width="100%"; videoNativo.style.display="block"; videoNativo.style.borderRadius="12px"; videoNativo.style.background="#000";
+    videoNativo.style.width="100%"; videoNativo.style.height="100%"; videoNativo.style.objectFit="cover"; videoNativo.style.display="block"; videoNativo.style.borderRadius="12px"; videoNativo.style.background="#000";
     const lector=document.getElementById("lector"); lector.innerHTML=""; lector.appendChild(videoNativo);
     streamNativo=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},audio:false});
     videoNativo.srcObject=streamNativo;
@@ -1431,7 +1461,7 @@ async function iniciar(){
       Html5QrcodeSupportedFormats.UPC_A,
       Html5QrcodeSupportedFormats.UPC_E
     ],experimentalFeatures:{useBarCodeDetectorIfSupported:true},verbose:false});
-    await scanner.start({facingMode:"environment"},{fps:5,qrbox:{width:280,height:130}},async txt=>{
+    await scanner.start({facingMode:"environment"},{fps:6,qrbox:{width:280,height:90}},async txt=>{
       if(!activo)return;
       await parar();
       if(navigator.vibrate)navigator.vibrate(100);
