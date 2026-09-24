@@ -908,23 +908,25 @@ async function sincronizarEtiquetaSemillaLQDD(codigo){
 }
 
 async function buscarProducto(codigo){
-  // Primero consultamos el conocimiento mundial de LQDD.
-  // Después contrastamos/completamos con las bases abiertas que ya utiliza la app.
-  let globalLQDD=null;
-  try{ globalLQDD=await consultarLQDDGlobal(codigo); }catch(e){}
-
+  // El conocimiento mundial de LQDD y las bases abiertas son fuentes
+  // independientes: se consultan las dos A LA VEZ (no una detrás de otra)
+  // para no duplicar el tiempo de espera en cada escaneo.
   const bases=["openfoodfacts","openbeautyfacts","openproductsfacts"];
   const campos="product_name,abbreviated_product_name,generic_name,brands,quantity,product_quantity,product_quantity_unit,categories,categories_tags,manufacturing_places,manufacturing_places_tags,cities_tags,origins,origins_tags,origin,labels,labels_tags,emb_codes,emb_codes_tags,emb_codes_orig,packaging_text,customer_service,producer,stores,link,knowledge_panels,ingredients_text,ingredients_text_es,allergens,allergens_tags";
-  const res=await Promise.all(bases.map(async b=>{
-    const ac=new AbortController(), t=setTimeout(()=>ac.abort(),9000);
-    try{
-      const url="https://world."+b+".org/api/v3/product/"+encodeURIComponent(codigo)+"?fields="+encodeURIComponent(campos)+"&knowledge_panels_included=origins,packaging";
-      const r=await fetch(url,{signal:ac.signal});
-      if(!r.ok)return null;
-      const d=await r.json();
-      return d&&d.product?d.product:null;
-    }catch(e){return null;} finally{clearTimeout(t);}
-  }));
+
+  const [globalLQDD, res] = await Promise.all([
+    consultarLQDDGlobal(codigo).catch(()=>null),
+    Promise.all(bases.map(async b=>{
+      const ac=new AbortController(), t=setTimeout(()=>ac.abort(),9000);
+      try{
+        const url="https://world."+b+".org/api/v3/product/"+encodeURIComponent(codigo)+"?fields="+encodeURIComponent(campos)+"&knowledge_panels_included=origins,packaging";
+        const r=await fetch(url,{signal:ac.signal});
+        if(!r.ok)return null;
+        const d=await r.json();
+        return d&&d.product?d.product:null;
+      }catch(e){return null;} finally{clearTimeout(t);}
+    }))
+  ]);
 
   let ps=res.filter(Boolean);
   const has=v=>v&&((Array.isArray(v)&&v.length)||(!Array.isArray(v)&&String(v).trim()));
@@ -1532,6 +1534,7 @@ if(verIngredientesBtn){
     if(!consulta) return null;
     const ac=new AbortController();
     controladorMapaMundialL=ac;
+    const t=setTimeout(()=>ac.abort(),6000); // límite por consulta individual (no por toda la búsqueda)
     try{
       const url="https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&addressdetails=1&accept-language=es&q="+encodeURIComponent(consulta);
       const resp=await fetch(url,{signal:ac.signal});
@@ -1548,6 +1551,7 @@ if(verIngredientesBtn){
     }catch(e){
       return null;
     }finally{
+      clearTimeout(t);
       if(controladorMapaMundialL===ac) controladorMapaMundialL=null;
     }
   }
@@ -1568,32 +1572,29 @@ if(verIngredientesBtn){
     // 1) La pista más fiable: código postal + todo lo que aparece en su línea.
     const lineas=texto.split('\n').map(x=>x.trim()).filter(Boolean);
     for(const linea of lineas){
+      if(consultas.length>=3) break;
       if(/\b\d{5}\b/.test(linea)){
         const m=linea.match(/\b(\d{5})\b\s+(.+)/);
-        if(m){
-          anadir(m[1]+' '+m[2].slice(0,140));
-          if(datos.provincia) anadir(m[1]+' '+datos.provincia);
-        }
+        if(m) anadir(m[1]+' '+m[2].slice(0,140));
       }
     }
 
-    // 2) La localidad detectada por OCR se comprueba SIEMPRE en el callejero.
-    // No hace falta que esté previamente en nuestro vocabulario: si Tesseract lee
-    // "Málaga", "Loja", "Oliva" o cualquier otro pueblo, se consulta
-    // directamente al mapa para comprobar qué localidad es y a qué provincia pertenece.
-    if(datos.ciudad) anadir(datos.ciudad);
+    // 2) Ciudad + provincia/código postal (más precisa que la ciudad sola).
+    if(consultas.length<3 && datos.ciudad && datos.provincia) anadir(datos.ciudad+' '+datos.provincia);
+    if(consultas.length<3 && datos.ciudad && datos.codigoPostal) anadir(datos.codigoPostal+' '+datos.ciudad);
 
-    // Dirección completa y combinaciones ciudad/provincia/código postal.
-    if(datos.direccion){
-      anadir((datos.codigoPostal?' '+datos.codigoPostal:'')+' '+datos.direccion);
-    }
-    if(datos.ciudad && datos.provincia) anadir(datos.ciudad+' '+datos.provincia);
-    if(datos.ciudad && datos.codigoPostal) anadir(datos.codigoPostal+' '+datos.ciudad);
+    // 3) La localidad detectada por OCR sola, como último recurso.
+    if(consultas.length<3 && datos.ciudad) anadir(datos.ciudad);
+    if(consultas.length<3 && datos.direccion) anadir((datos.codigoPostal?' '+datos.codigoPostal:'')+' '+datos.direccion);
 
-    // 3) Líneas que parecen una localidad: "Loja - Granada", "Loja, Granada", etc.
-    for(const linea of lineas){
-      if(/[\-–—,]/.test(linea) && linea.length<=180 && !/^(?:lote|consumir|conservar|ingredientes|nutrition)/i.test(linea)){
-        if(/\b(?:granada|malaga|madrid|barcelona|valencia|sevilla|lugo|alicante|murcia|cadiz|cordoba|toledo|lugo)\b/i.test(linea) || /\b\d{5}\b/.test(linea)) anadir(linea);
+    // 4) Líneas que parecen una localidad: "Loja - Granada", "Loja, Granada", etc.
+    // (solo si con lo anterior no hemos reunido ya 3 consultas, para no alargar la búsqueda)
+    if(consultas.length<3){
+      for(const linea of lineas){
+        if(consultas.length>=3) break;
+        if(/[\-–—,]/.test(linea) && linea.length<=180 && !/^(?:lote|consumir|conservar|ingredientes|nutrition)/i.test(linea)){
+          if(/\b(?:granada|malaga|madrid|barcelona|valencia|sevilla|lugo|alicante|murcia|cadiz|cordoba|toledo|lugo)\b/i.test(linea) || /\b\d{5}\b/.test(linea)) anadir(linea);
+        }
       }
     }
 
@@ -1934,8 +1935,8 @@ if(verIngredientesBtn){
         img.onload=()=>{
           const srcW=img.naturalWidth||img.width, srcH=img.naturalHeight||img.height;
           // Para OCR damos más tamaño al texto, pero limitamos memoria en móviles.
-          const maxSide=2400;
-          const scale=Math.min(2.0, maxSide/Math.max(srcW,srcH));
+          const maxSide=2000;
+          const scale=Math.min(1.8, maxSide/Math.max(srcW,srcH));
           const w=Math.max(1,Math.round(srcW*scale));
           const h=Math.max(1,Math.round(srcH*scale));
           const base=document.createElement("canvas"); base.width=w;base.height=h;
@@ -1953,20 +1954,21 @@ if(verIngredientesBtn){
               let v=g;
               if(mode==="contrast") v=Math.max(0,Math.min(255,(g-128)*1.55+128));
               else if(mode==="threshold") v=g>150?255:0;
-              else if(mode==="soft") v=Math.max(0,Math.min(255,(g-128)*1.15+128));
               a[i]=a[i+1]=a[i+2]=v;
             }
             x.putImageData(d,0,0);
             return c.toDataURL("image/jpeg",0.94);
           }
 
-          // Variante 0 conserva el color: útil cuando el texto blanco está sobre fondo azul.
+          // Orden pensado para acertar cuanto antes con etiquetas impresas
+          // (blanco/negro y contraste suelen leerse mejor que la foto en color
+          // sin tocar); así, si la primera o segunda variante ya da un buen
+          // resultado, no hace falta seguir probando las demás.
           const original=base.toDataURL("image/jpeg",0.94);
           resolve([
-            {src:original, name:"color", psm:"6"},
+            {src:dataUrl("threshold"), name:"blanco_negro", psm:"6"},
             {src:dataUrl("contrast"), name:"contraste", psm:"6"},
-            {src:dataUrl("soft"), name:"suave", psm:"11"},
-            {src:dataUrl("threshold"), name:"blanco_negro", psm:"11"}
+            {src:original, name:"color", psm:"11"}
           ]);
         };
         img.src=fr.result;
@@ -2023,9 +2025,9 @@ if(verIngredientesBtn){
         barra.style.width=Math.round(10+((i+1)/total)*70)+"%";
         pct.textContent=Math.round(10+((i+1)/total)*70)+"%";
 
-        // Si ya tenemos una lectura estructurada de alta confianza, no gastamos
-        // más tiempo del necesario en el móvil.
-        if(mejor.datos && (mejor.datos.envasadoPor||mejor.datos.fabricante||mejor.datos.ciudad||mejor.datos.codigoPostal) && mejor.conf>=82) break;
+        // Si ya tenemos una lectura estructurada útil, no gastamos más tiempo
+        // del necesario en el móvil probando el resto de variantes.
+        if(mejor.datos && (mejor.datos.envasadoPor||mejor.datos.fabricante||mejor.datos.ciudad||mejor.datos.codigoPostal) && mejor.conf>=58) break;
       }
 
       let texto=mejor.texto;
