@@ -83,7 +83,7 @@
   <small id="origen"></small>
    <div id="gs1Datos" style="margin-top:12px;text-align:left;font-size:.95rem"></div>
    <div style="margin-top:10px;font-size:.78rem;color:#5a4200">
-     ℹ️ El prefijo GS1 identifica dónde se asignó el número, no necesariamente dónde se fabricó.<br>📍 Los lugares se ubican con datos de © OpenStreetMap.
+     ℹ️ El prefijo GS1 identifica dónde se asignó el número, no necesariamente dónde se fabricó. El propietario del GTIN y el fabricante físico pueden ser empresas distintas.<br>📍 Los lugares se ubican con datos de © OpenStreetMap.
    </div>
 </div>
 
@@ -382,6 +382,7 @@ function hablarResultadoCompleto(info, codigo, paisPrefijo, frase, paisFab, tien
   if(paisPrefijo) partes.push("País según el código: "+paisPrefijo);
   if(info && info.nombre) partes.push("Producto: "+info.nombre);
   if(info && info.marca) partes.push("Marca: "+info.marca);
+   if(info && info.fabricante) partes.push("Empresa/fabricante registrado: "+info.fabricante);
   if(info && info.denominacion) partes.push("Denominación: "+info.denominacion);
   if(info && info.cantidad) partes.push("Cantidad: "+info.cantidad);
   if(info && info.categoria) partes.push("Categoría: "+info.categoria);
@@ -730,6 +731,7 @@ function lqddGlobalToInfo(row){
   return {
     nombre:row.nombre||"",
     marca:row.marca||"",
+     fabricante:row.fabricante||row.productor||row.empresa||"",
     denominacion:"",
     cantidad:row.cantidad||"",
     categoria:row.categoria||"",
@@ -911,7 +913,7 @@ async function guardarProductoCentralLQDD(codigo, info){
     tipo_dato:"producto_escaneado",
     dato:JSON.stringify({
       version:2, codigo:cod,
-      nombre:info.nombre||"", marca:info.marca||"", cantidad:info.cantidad||"",
+      nombre:info.nombre||"", marca:info.marca||"", fabricante:info.fabricante||"", cantidad:info.cantidad||"",
       categoria:info.categoria||"", fabricacion:info.prod||null, origen:info.ori||"",
       ingredientes:info.ingredients||"", alergenos:info.alergenos||"",
       etiqueta:info.etiquetaL||null, fuente_lectura:"LQDD Scanner"
@@ -946,27 +948,26 @@ async function consultarEtiquetaCentralLQDD(codigo){
   const cod=normalizarCodigoProducto(codigo);
   if(!cod) return null;
 
-  // Leemos TODOS los registros compatibles y elegimos la lectura con mayor
-  // revisión/versión. Esto evita que un registro viejo vuelva a aparecer si
-  // quedaron duplicados de una versión anterior de la aplicación.
+  // Una sola petición para el GTIN normalizado y su antiguo formato de 12 dígitos.
+  // Antes hacíamos una petición por formato, lo que añadía latencia en cada escaneo.
   const candidatas=[];
   try{
-    for(const c of codigosCompatiblesLQDD(cod)){
-      const base="/rest/v1/contributions?select=id,dato&codigo=eq."+encodeURIComponent(c)+"&tipo_dato=eq.etiqueta_ocr";
-      const r=await lqddSupabaseFetch(base);
-      if(!r.ok) continue;
+    const compatibles=codigosCompatiblesLQDD(cod);
+    const filtro=compatibles.length===1
+      ? "codigo=eq."+encodeURIComponent(compatibles[0])
+      : "codigo=in.("+compatibles.map(encodeURIComponent).join(",")+")";
+    const base="/rest/v1/contributions?select=id,dato,codigo&"+filtro+"&tipo_dato=eq.etiqueta_ocr";
+    const r=await lqddSupabaseFetch(base);
+    if(r.ok){
       const data=await r.json().catch(()=>[]);
-      if(!Array.isArray(data)) continue;
-      for(const row of data){
+      if(Array.isArray(data)) for(const row of data){
         if(!row || !row.dato) continue;
         try{
           let dato=row.dato;
           if(typeof dato==="string") dato=JSON.parse(dato);
           if(dato && dato.etiqueta && typeof dato.etiqueta==="object") candidatas.push({
-            etiqueta:dato.etiqueta,
-            revision:Number(dato.revision)||0,
-            version:Number(dato.version)||0,
-            id:row.id
+            etiqueta:dato.etiqueta, revision:Number(dato.revision)||0,
+            version:Number(dato.version)||0, id:row.id
           });
         }catch(_e){}
       }
@@ -977,7 +978,6 @@ async function consultarEtiquetaCentralLQDD(codigo){
     console.warn("LQDD: no se pudo consultar la etiqueta central",e);
   }
 
-  // Si la ficha todavía no existe en Supabase, recuperamos la semilla conocida.
   const semilla=lqddEtiquetaSemilla(cod);
   if(semilla) return Object.assign({},semilla,{_fuenteSemilla:true});
   return null;
@@ -996,65 +996,73 @@ async function sincronizarEtiquetaSemillaLQDD(codigo){
   }
 }
 
+// Caché local corta para que un producto ya conocido aparezca casi al instante.
+// La base central sigue siendo la fuente que puede actualizar la ficha.
+const LQDD_PRODUCT_CACHE_TTL=7*24*60*60*1000;
+function cargarProductoCache(codigo){
+  try{
+    const cod=normalizarCodigoProducto(codigo);
+    const x=JSON.parse(localStorage.getItem("producto_"+cod)||"null");
+    if(x && x.info && Date.now()-Number(x.ts||0)<LQDD_PRODUCT_CACHE_TTL) return x.info;
+  }catch(e){}
+  return null;
+}
+function guardarProductoCache(codigo,info){
+  try{
+    const cod=normalizarCodigoProducto(codigo);
+    if(cod && info) localStorage.setItem("producto_"+cod,JSON.stringify({ts:Date.now(),info}));
+  }catch(e){}
+}
+function infoProductoSuficiente(info){
+  if(!info) return false;
+  return !!(info.nombre||info.marca||info.fabricante||info.ingredients||info.prod||info.ori||info.etiquetaL);
+}
+
 async function buscarProducto(codigo){
-  // El conocimiento mundial de LQDD y las bases abiertas son fuentes
-  // independientes: se consultan las dos A LA VEZ (no una detrás de otra)
-  // para no duplicar el tiempo de espera en cada escaneo.
-  const bases=["openfoodfacts","openbeautyfacts","openproductsfacts"];
+  const cached=cargarProductoCache(codigo);
+  if(cached) return cached;
+
+  // Primero consultamos LQDD + OpenFoodFacts. Las otras bases sólo se usan si
+  // realmente faltan datos, evitando esperar tres servidores en cada escaneo.
   const campos="product_name,abbreviated_product_name,generic_name,brands,quantity,product_quantity,product_quantity_unit,categories,categories_tags,manufacturing_places,manufacturing_places_tags,cities_tags,origins,origins_tags,origin,labels,labels_tags,emb_codes,emb_codes_tags,emb_codes_orig,packaging_text,customer_service,producer,stores,link,knowledge_panels,ingredients_text,ingredients_text_es,allergens,allergens_tags";
-
-  const [globalLQDD, res] = await Promise.all([
-    consultarLQDDGlobal(codigo).catch(()=>null),
-    Promise.all(bases.map(async b=>{
-      const ac=new AbortController(), t=setTimeout(()=>ac.abort(),9000);
-      try{
-        const url="https://world."+b+".org/api/v3/product/"+encodeURIComponent(codigo)+"?fields="+encodeURIComponent(campos)+"&knowledge_panels_included=origins,packaging";
-        const r=await fetch(url,{signal:ac.signal});
-        if(!r.ok)return null;
-        const d=await r.json();
-        return d&&d.product?d.product:null;
-      }catch(e){return null;} finally{clearTimeout(t);}
-    }))
-  ]);
-
-  let ps=res.filter(Boolean);
+  const globalPromise=consultarLQDDGlobal(codigo).catch(()=>null);
+  const offPromise=(async()=>{
+    const ac=new AbortController(), t=setTimeout(()=>ac.abort(),5000);
+    try{
+      const url="https://world.openfoodfacts.org/api/v3/product/"+encodeURIComponent(codigo)+"?fields="+encodeURIComponent(campos)+"&knowledge_panels_included=origins,packaging";
+      const r=await fetch(url,{signal:ac.signal});
+      if(!r.ok)return null;
+      const d=await r.json();
+      return d&&d.product?d.product:null;
+    }catch(e){return null;} finally{clearTimeout(t);}
+  })();
+  const [globalLQDD,off]=await Promise.all([globalPromise,offPromise]);
+  let ps=off?[off]:[];
   const has=v=>v&&((Array.isArray(v)&&v.length)||(!Array.isArray(v)&&String(v).trim()));
 
-  // Los datos mundiales de LQDD se incorporan como una fuente adicional.
-  // Las fuentes abiertas pueden completar los campos que falten.
   if(globalLQDD){
-    ps.unshift({
-      product_name:globalLQDD.nombre,
-      brands:globalLQDD.marca,
-      quantity:globalLQDD.cantidad,
-      categories:globalLQDD.categoria,
-      manufacturing_places:globalLQDD.fab,
-      origins:globalLQDD.ori,
-      ingredients_text:globalLQDD.ingredients,
-      allergens:globalLQDD.alergenos,
-      _lqddInfo:globalLQDD,
-      _lqddGlobal:true
-    });
+    ps.unshift({product_name:globalLQDD.nombre,brands:globalLQDD.marca,producer:globalLQDD.fabricante,quantity:globalLQDD.cantidad,
+      categories:globalLQDD.categoria,manufacturing_places:globalLQDD.fab,origins:globalLQDD.ori,
+      ingredients_text:globalLQDD.ingredients,allergens:globalLQDD.alergenos,_lqddInfo:globalLQDD,_lqddGlobal:true});
   }
 
-  // Refuerzo interno: si la consulta directa por código no encontró el producto,
-  // o lo encontró pero le faltan marca/nombre/fabricación, se busca ese MISMO
-  // código dentro de las bases abiertas (por texto, no por endpoint exacto),
-  // porque a veces un espejo tiene el producto indexado en el buscador pero no
-  // en la consulta directa. Nunca se muestra ninguna lista de comparación: solo
-  // se aceptan resultados cuyo código coincide exactamente con el escaneado.
-  const necesitaRefuerzo = !ps.length || !ps.some(p=>has(p.brands)) || !ps.some(p=>has(p.product_name));
-  if(necesitaRefuerzo){
-    try{
-      const extra=await buscarPorCodigoEnBusquedaInterna(codigo, campos);
-      if(extra.length) ps=ps.concat(extra);
-    }catch(e){ /* si falla, seguimos solo con lo que ya teníamos */ }
+  // Fallback: sólo ahora consultamos las otras dos bases y el buscador interno.
+  if(!ps.length || !ps.some(p=>has(p.product_name)) || !ps.some(p=>has(p.brands))){
+    const fallbacks=["openbeautyfacts","openproductsfacts"];
+    const extra=await Promise.all(fallbacks.map(async b=>{
+      const ac=new AbortController(), t=setTimeout(()=>ac.abort(),4500);
+      try{
+        const url="https://world."+b+".org/api/v3/product/"+encodeURIComponent(codigo)+"?fields="+encodeURIComponent(campos);
+        const r=await fetch(url,{signal:ac.signal});
+        if(!r.ok)return null; const d=await r.json(); return d&&d.product?d.product:null;
+      }catch(e){return null;} finally{clearTimeout(t);}
+    }));
+    ps=ps.concat(extra.filter(Boolean));
   }
-  const score=p=>[
-    "product_name","brands","generic_name","quantity","categories",
-    "manufacturing_places","manufacturing_places_tags","emb_codes",
-    "emb_codes_tags","origins","packaging_text","customer_service"
-  ].reduce((n,k)=>n+(has(p[k])?1:0),0);
+
+  const score=p=>["product_name","brands","generic_name","quantity","categories","manufacturing_places",
+    "manufacturing_places_tags","emb_codes","emb_codes_tags","origins","packaging_text","customer_service"]
+    .reduce((n,k)=>n+(has(p[k])?1:0),0);
   ps.sort((a,b)=>score(b)-score(a));
   const campo=k=>ps.map(p=>p[k]).find(has)||"";
   const nombre=campo("product_name")||campo("abbreviated_product_name");
@@ -1067,15 +1075,14 @@ async function buscarProducto(codigo){
   const labels=campo("labels_tags")||campo("labels");
   const emb=campo("emb_codes"), embTags=campo("emb_codes_tags"), embOrig=campo("emb_codes_orig");
   const packaging=campo("packaging_text"), customer=campo("customer_service"), producer=campo("producer"), link=campo("link");
+  // Empresa/fabricante: priorizamos el dato explícito de LQDD y después el campo producer.
+  const fabricante=ps.map(p=>p._lqddInfo&&p._lqddInfo.fabricante).find(has)||producer||"";
   const panels=campo("knowledge_panels");
   const ingredients=campo("ingredients_text_es")||campo("ingredients_text");
   const alergenosRaw=campo("allergens");
   const alergenos=alergenosRaw?String(alergenosRaw).split(",").map(a=>a.replace(/^[a-z]{2}:/i,"").trim()).filter(Boolean).join(", "):"";
 
-  let evidencias=[];
-  let p;
-  const hintPais=paisDe(codigo);
-  // 1) Declaración directa: es la evidencia más fuerte.
+  let evidencias=[],p; const hintPais=paisDe(codigo);
   if((p=detectar(fab))) evidencias.push({pais:p,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:fab});
   else if((p=paisDeTags(fabTags))) evidencias.push({pais:p,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:Array.isArray(fabTags)?fabTags.join(", "):String(fabTags)});
   else if(fab && String(fab).trim()){
@@ -1083,67 +1090,33 @@ async function buscarProducto(codigo){
     if(g) evidencias.push({pais:g.pais,nivel:g.ambiguo?"asociado":"confirmado",fuente:"Lugar de fabricación declarado (ubicado con OpenStreetMap)",detalle:String(fab)+" → "+g.lugar+(g.nota?" · "+g.nota:"")});
     else evidencias.push({pais:null,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:String(fab)});
   }
-
-  // 2) Etiquetas made-in: evidencia asociada, no equivalente a una declaración libre.
   if(!evidencias.length && (p=deEtiqueta(labels))) evidencias.push({pais:p,nivel:"asociado",fuente:"Etiqueta de fabricación/origen del producto",detalle:String(labels)});
-
-  // 3) Código sanitario europeo: sus dos letras identifican el país del establecimiento.
   const sanitario=String(emb||embOrig||"");
   const sm=sanitario.match(/(?:^|[^A-Z])([A-Z]{2})\s?\d[\d.]*\s*(?:CE)?/i);
   if(sm && EMB[sm[1].toUpperCase()]){
-    const ep=EMB[sm[1].toUpperCase()];
-    let det=sanitario;
-    if(sm[1].toUpperCase()==="ES"){ const pm=sanitario.match(/ES\s*(\d{2})[.\s]/i); if(pm && PROV[pm[1]]) det+=" → provincia de "+PROV[pm[1]]+" (según el número de registro)"; }
+    const ep=EMB[sm[1].toUpperCase()]; let det=sanitario;
+    if(sm[1].toUpperCase()==="ES"){const pm=sanitario.match(/ES\s*(\d{2})[.\s]/i);if(pm&&PROV[pm[1]])det+=" → provincia de "+PROV[pm[1]]+" (según el número de registro)";}
     evidencias.push({pais:ep,nivel:"asociado",fuente:"Estampilla sanitaria / código de establecimiento",detalle:det});
   }
-
-  // 4) EMB francés: es un código geográfico de una empresa de envasado/condicionado.
-  // No lo llamamos automáticamente "fabricación": puede ser fabricante, importador o envasador.
   const em=String(emb||embOrig||"").match(/(?:^|[^A-Z])EMB\s*([0-9]{5})([A-Z]?)/i);
   let embInfo=null;
-  if(em){
-    embInfo={pais:"Francia",codigo:"EMB "+em[1]+(em[2]||""),nivel:"asociado",fuente:"Código EMB francés",detalle:"Identifica un establecimiento de acondicionado/envasado en Francia; no demuestra por sí solo que allí se fabricó el producto."};
-    evidencias.push(embInfo);
-  }
-
-  // 5) Ciudad/país explícito en los tags de fabricación.
-  if(!evidencias.length && Array.isArray(fabTags)){
-    const raw=fabTags.map(x=>String(x)).join(" ");
-    if((p=detectar(raw))) evidencias.push({pais:p,nivel:"confirmado",fuente:"Etiquetas del lugar de fabricación",detalle:raw});
-  }
-
-  // 6) Datos de empresa: sirven como pista, pero nunca se presentan como fabricación confirmada.
-  const empresaTexto=[customer,producer].filter(Boolean).join(" | ");
-  const paisEmpresa=detectar(empresaTexto);
-  if(paisEmpresa) evidencias.push({pais:paisEmpresa,nivel:"asociado",fuente:"Dirección/datos de empresa del producto",detalle:empresaTexto});
-
-  // Elegimos la evidencia de mayor calidad. Directa > asociada.
+  if(em){embInfo={pais:"Francia",codigo:"EMB "+em[1]+(em[2]||""),nivel:"asociado",fuente:"Código EMB francés",detalle:"Identifica un establecimiento de acondicionado/envasado en Francia; no demuestra por sí solo que allí se fabricó el producto."};evidencias.push(embInfo);}
+  if(!evidencias.length && Array.isArray(fabTags)){const raw=fabTags.map(x=>String(x)).join(" ");if((p=detectar(raw)))evidencias.push({pais:p,nivel:"confirmado",fuente:"Etiquetas del lugar de fabricación",detalle:raw});}
+  const empresaTexto=[customer,producer].filter(Boolean).join(" | "),paisEmpresa=detectar(empresaTexto);
+  if(paisEmpresa)evidencias.push({pais:paisEmpresa,nivel:"asociado",fuente:"Dirección/datos de empresa del producto",detalle:empresaTexto});
   const prioridad={confirmado:3,asociado:2};
   evidencias.sort((a,b)=>(prioridad[b.nivel]||0)-(prioridad[a.nivel]||0));
   let prod=evidencias.find(x=>x.pais)||null;
-  if(!prod && globalLQDD && globalLQDD.prod) prod=globalLQDD.prod;
-  if(globalLQDD && Array.isArray(globalLQDD.evidencias)){
-    for(const e of globalLQDD.evidencias){
-      if(!evidencias.some(x=>x.fuente===e.fuente && x.pais===e.pais)){
-        evidencias.push(e);
-      }
-    }
-  }
+  if(!prod&&globalLQDD&&globalLQDD.prod)prod=globalLQDD.prod;
+  if(globalLQDD&&Array.isArray(globalLQDD.evidencias))for(const e of globalLQDD.evidencias)if(!evidencias.some(x=>x.fuente===e.fuente&&x.pais===e.pais))evidencias.push(e);
   evidencias.sort((a,b)=>(prioridad[b.nivel]||0)-(prioridad[a.nivel]||0));
-
-  let envasado=null;
-  const ep=String(emb||embOrig||"");
-  if((p=deEmb(ep))) envasado={pais:p,fuente:"Código de establecimiento/envasador",nivel:"asociado",detalle:ep};
-  else if(embInfo) envasado=embInfo;
-  else if((p=deEmb(embTags))) envasado={pais:p,fuente:"Código de establecimiento/envasador",nivel:"asociado",detalle:String(embTags)};
-
-  const nombreFinal=nombre || (globalLQDD&&globalLQDD.nombre) || "";
-  const marcaFinal=marca || (globalLQDD&&globalLQDD.marca) || "";
-  const cantidadFinal=cantidad || (globalLQDD&&globalLQDD.cantidad) || "";
-  const categoriaFinal=categoria || (globalLQDD&&globalLQDD.categoria) || "";
-  const ingredientsFinal=ingredients || (globalLQDD&&globalLQDD.ingredients) || "";
-  const alergenosFinal=alergenos || (globalLQDD&&globalLQDD.alergenos) || "";
-  return {nombre:nombreFinal,marca:marcaFinal,denominacion,cantidad:cantidadFinal,categoria:categoriaFinal,fab,ori,oriTags,emb,embTags,embOrig,packaging,customer,producer,ciudades,panels,prod,envasado,evidencias,fuentes:ps.length,ingredients:ingredientsFinal,alergenos:alergenosFinal};
+  let envasado=null; const ep=String(emb||embOrig||"");
+  if((p=deEmb(ep)))envasado={pais:p,fuente:"Código de establecimiento/envasador",nivel:"asociado",detalle:ep};
+  else if(embInfo)envasado=embInfo;
+  else if((p=deEmb(embTags)))envasado={pais:p,fuente:"Código de establecimiento/envasador",nivel:"asociado",detalle:String(embTags)};
+  const info={nombre:nombre||(globalLQDD&&globalLQDD.nombre)||"",marca:marca||(globalLQDD&&globalLQDD.marca)||"",denominacion,cantidad:cantidad||(globalLQDD&&globalLQDD.cantidad)||"",categoria:categoria||(globalLQDD&&globalLQDD.categoria)||"",fab,ori,oriTags,emb,embTags,embOrig,packaging,customer,producer,ciudades,panels,prod,envasado,evidencias,fuentes:ps.length,ingredients:ingredients||(globalLQDD&&globalLQDD.ingredients)||"",alergenos:alergenos||(globalLQDD&&globalLQDD.alergenos)||""};
+  guardarProductoCache(codigo,info);
+  return info;
 }
 
 // País guardado en el móvil para un código (por ejemplo, leído de la etiqueta)
@@ -1183,27 +1156,24 @@ async function mostrar(codigo){
   $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("gs1Datos").innerHTML=""; $("datosEtiquetaGuardados").innerHTML="";
   if(!prefijo){ $("pais").textContent="Código no válido"; hablar("Código no válido"); return; }
   $("pais").textContent="🔎 Consultando información del producto...";
-  const info=await buscarProducto(codigoProducto);
-  // La base central manda. Primero consultamos Supabase para que cualquier móvil
-  // vea la última etiqueta guardada para ese código. El almacenamiento local solo
-  // se usa como caché si la base central no devuelve datos.
-  let etiquetaGuardada=await consultarEtiquetaCentralLQDD(codigoProducto);
-  if(etiquetaGuardada){
-    guardarEtiquetaPorCodigo(codigoProducto,etiquetaGuardada);
-  }else{
-    // Si Supabase todavía no tiene la ficha, usamos la semilla central de LQDD
-    // para este producto y la sincronizamos automáticamente.
+  // Producto y etiqueta central se buscan a la vez. Antes la etiqueta empezaba
+  // después de terminar toda la búsqueda del producto, sumando dos esperas.
+  const etiquetaLocal=cargarEtiquetaGuardada(codigoProducto);
+  const [infoBase, etiquetaCentral]=await Promise.all([
+    buscarProducto(codigoProducto),
+    consultarEtiquetaCentralLQDD(codigoProducto).catch(()=>null)
+  ]);
+  const info=infoBase||{};
+  let etiquetaGuardada=etiquetaCentral||etiquetaLocal||lqddEtiquetaSemilla(codigoProducto);
+  if(etiquetaCentral) guardarEtiquetaPorCodigo(codigoProducto,etiquetaCentral);
+  else if(!etiquetaGuardada){
     const semilla=lqddEtiquetaSemilla(codigoProducto);
-    if(semilla){
-      etiquetaGuardada=semilla;
-      guardarEtiquetaPorCodigo(codigoProducto,etiquetaGuardada);
-      sincronizarEtiquetaSemillaLQDD(codigoProducto);
-    }else{
-      etiquetaGuardada=cargarEtiquetaGuardada(codigoProducto);
-    }
+    if(semilla){etiquetaGuardada=semilla;guardarEtiquetaPorCodigo(codigoProducto,semilla);sincronizarEtiquetaSemillaLQDD(codigoProducto);}
   }
   if(etiquetaGuardada){
     info.etiquetaL=Object.assign({},etiquetaGuardada);
+    // Una lectura explícita de la etiqueta tiene prioridad sobre un dato genérico de productor.
+    if(etiquetaGuardada.fabricante) info.fabricante=etiquetaGuardada.fabricante;
   }
   actual={codigo:codigoProducto,prefijo,info,gs1Raw}; window.LQDD_getCodigoActual=()=>actual&&actual.codigo; pintar();
 }
@@ -1253,12 +1223,20 @@ function extraerGS1(raw){
   out.es2D=!!(out.origen||out.inicial||/^(https?:\/\/)/i.test(t));
   return out;
 }
+// Extrae señales GS1 que pueden ayudar a identificar la empresa/localización sin hacer
+// una consulta lenta. No confunde el prefijo del EAN con el fabricante.
+function senalesEmpresaGS1(raw){
+  const d=extraerGS1(raw);
+  return {gtin:d.gtin||null,gln:d.glnProduccion||null};
+}
+
 function pintarGS1(raw){
   const box=$("gs1Datos"); if(!box) return null;
   const d=extraerGS1(raw); let h="";
   if(d.gtin) h+="🔢 <b>GTIN:</b> "+esc(d.gtin)+"<br>";
   if(d.origen) h+="🌍 <b>País de origen:</b> "+esc(d.origen)+"<br>";
   if(d.inicial) h+="🧪 <b>País de procesamiento inicial:</b> "+esc(d.inicial)+"<br>";
+  if(d.glnProduccion) h+="🏢 <b>GLN de producción/localización:</b> "+esc(d.glnProduccion)+"<br><small>Este GLN permite identificar una localización en GS1 cuando existe un registro asociado.</small><br>";
   if(!h && d.es2D) h="📦 <b>QR/DataMatrix GS1 detectado</b><br><small>Este código no contiene datos de país que podamos mostrar directamente.</small>";
   box.innerHTML=h ? '<div style="padding:10px;background:#fff7d6;border-radius:10px;border:1px solid #e0c45c">'+h+'</div>' : '';
   return d;
@@ -1316,6 +1294,7 @@ function pintar(silencio, sinGuardar){
   if(info.cantidad) html+="⚖️ <b>Cantidad:</b> "+esc(info.cantidad)+"<br>";
   if(info.categoria) html+="🗂️ <b>Categoría:</b> "+esc(info.categoria)+"<br>";
   if(info.ori) html+="🌍 <b>Origen declarado:</b> "+esc(info.ori)+"<br>";
+  if(info.fabricante) html+="🏢 <b>Fabricante / empresa registrada:</b> "+esc(info.fabricante)+"<br>";
   if(tieneFabricacion){
     const mismo=norm(paisPrefijo)===norm(paisFab);
     const nivel=info.prod.nivel==="confirmado"?"🟢 CONFIRMADO":"🟡 ASOCIADO";
@@ -1358,7 +1337,7 @@ function pintar(silencio, sinGuardar){
     try{ snapshot=JSON.parse(JSON.stringify({prefijo,info,gs1Raw:actual.gs1Raw||""})); }catch(e){}
     guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1",
       {nombre:info.nombre||"", frase, snapshot});
-    if(info.nombre || info.marca || info.prod || info.ori || info.etiquetaL){
+    if(info.nombre || info.marca || info.fabricante || info.prod || info.ori || info.etiquetaL){
       guardarProductoCentralLQDD(codigo,info).catch(err=>console.warn("LQDD: no se pudo actualizar la ficha central",err));
     }
   }
@@ -1389,7 +1368,7 @@ async function iniciar(){
     ...(Html5QrcodeSupportedFormats.DATA_MATRIX!==undefined?[Html5QrcodeSupportedFormats.DATA_MATRIX]:[])
   ],experimentalFeatures:{useBarCodeDetectorIfSupported:true},verbose:false});
   try{
-    await scanner.start({facingMode:"environment"},{fps:10,qrbox:{width:260,height:140}},async txt=>{
+    await scanner.start({facingMode:"environment"},{fps:6,qrbox:{width:300,height:160}},async txt=>{
       if(!activo)return;
       await parar();
       if(navigator.vibrate)navigator.vibrate(150);
@@ -2084,7 +2063,7 @@ if(verIngredientesBtn){
         img.onload=()=>{
           const srcW=img.naturalWidth||img.width, srcH=img.naturalHeight||img.height;
           // Para OCR damos más tamaño al texto, pero limitamos memoria en móviles.
-          const maxSide=2000;
+          const maxSide=1600;
           const scale=Math.min(1.8, maxSide/Math.max(srcW,srcH));
           const w=Math.max(1,Math.round(srcW*scale));
           const h=Math.max(1,Math.round(srcH*scale));
@@ -2109,16 +2088,14 @@ if(verIngredientesBtn){
             return c.toDataURL("image/jpeg",0.94);
           }
 
-          // Orden pensado para acertar cuanto antes con etiquetas impresas
-          // (blanco/negro y contraste suelen leerse mejor que la foto en color
-          // sin tocar); así, si la primera o segunda variante ya da un buen
-          // resultado, no hace falta seguir probando las demás.
-          const original=base.toDataURL("image/jpeg",0.94);
-          resolve([
-            {src:dataUrl("threshold"), name:"blanco_negro", psm:"6"},
-            {src:dataUrl("contrast"), name:"contraste", psm:"6"},
-            {src:original, name:"color", psm:"11"}
-          ]);
+          // Primera pasada rápida: color original. Las variantes costosas se
+          // generan sólo si la primera lectura no es suficientemente buena.
+          const original=base.toDataURL("image/jpeg",0.88);
+          resolve({
+            original,
+            contraste:()=>dataUrl("contrast"),
+            blanco_negro:()=>dataUrl("threshold")
+          });
         };
         img.src=fr.result;
       };
@@ -2152,7 +2129,7 @@ if(verIngredientesBtn){
       const variantes=await prepararVariantesEtiquetaL(file);
       barra.style.width="8%";pct.textContent="8%";
 
-      worker=await Tesseract.createWorker("spa+eng",1,{logger:m=>{
+      worker=await Tesseract.createWorker("spa",1,{logger:m=>{
         if(m && typeof m.progress==="number"){
           const p=Math.max(8,Math.min(96,Math.round(m.progress*100)));
           barra.style.width=p+"%";pct.textContent=p+"%";
@@ -2160,39 +2137,38 @@ if(verIngredientesBtn){
       }});
       try{await worker.setParameters({preserve_interword_spaces:"1",user_defined_dpi:"300",language_model_penalty_non_freq_dict_word:"0.05"});}catch(_e){}
 
-      let mejor={score:-1,texto:"",datos:null,conf:0};
-      const total=variantes.length;
 
-      for(let i=0;i<variantes.length;i++){
-        const v=variantes[i];
-        try{await worker.setParameters({tessedit_pageseg_mode:v.psm});}catch(_e){}
-        const ret=await worker.recognize(v.src);
+      let mejor={score:-1,texto:"",datos:null,conf:0};
+      async function probarOCR(src,psm,paso){
+        try{await worker.setParameters({tessedit_pageseg_mode:psm});}catch(_e){}
+        const ret=await worker.recognize(src);
         const texto=String(ret&&ret.data&&ret.data.text||"");
         const datos=extraerEtiquetaL(texto);
         const score=calidadOCRL(ret,texto,datos);
         if(score>mejor.score) mejor={score,texto,datos,conf:Number(ret&&ret.data&&ret.data.confidence)||0};
-        barra.style.width=Math.round(10+((i+1)/total)*70)+"%";
-        pct.textContent=Math.round(10+((i+1)/total)*70)+"%";
+        barra.style.width=paso+"%";pct.textContent=paso+"%";
+      }
+      await probarOCR(variantes.original,"11",55);
 
-        // Si ya tenemos una lectura estructurada útil, no gastamos más tiempo
-        // del necesario en el móvil probando el resto de variantes.
-        if(mejor.datos && (mejor.datos.envasadoPor||mejor.datos.fabricante||mejor.datos.ciudad||mejor.datos.codigoPostal) && mejor.conf>=58) break;
+      // Sólo hacemos una segunda pasada si la primera no encontró los campos
+      // importantes. Esto ahorra normalmente 1-2 OCR completos por etiqueta.
+      if(!(mejor.datos && (mejor.datos.envasadoPor||mejor.datos.fabricante||mejor.datos.ciudad||mejor.datos.direccion) && mejor.conf>=52)){
+        await probarOCR(variantes.contraste(),"6",78);
+      }
+      if(!(mejor.datos && (mejor.datos.envasadoPor||mejor.datos.fabricante||mejor.datos.ciudad||mejor.datos.direccion) && mejor.conf>=58)){
+        await probarOCR(variantes.blanco_negro(),"6",88);
       }
 
       let texto=mejor.texto;
       let datos=mejor.datos || extraerEtiquetaL(texto);
 
-      // Una segunda lectura sólo de la mejor variante con PSM 4 puede recuperar
-      // líneas de etiquetas que Tesseract haya unido incorrectamente.
+      // PSM 4 queda como último recurso y sólo si siguen faltando datos clave.
       if(!datos.envasadoPor && !datos.fabricante && !datos.ciudad && !datos.direccion){
-        const v=variantes[1]||variantes[0];
         try{await worker.setParameters({tessedit_pageseg_mode:"4"});}catch(_e){}
-        const ret2=await worker.recognize(v.src);
+        const ret2=await worker.recognize(variantes.original);
         const t2=String(ret2&&ret2.data&&ret2.data.text||"");
         const d2=extraerEtiquetaL(t2);
-        if(calidadOCRL(ret2,t2,d2)>calidadOCRL({data:{confidence:mejor.conf}},texto,datos)){
-          texto=t2;datos=d2;
-        }
+        if(calidadOCRL(ret2,t2,d2)>calidadOCRL({data:{confidence:mejor.conf}},texto,datos)){texto=t2;datos=d2;}
       }
 
       // Validación geográfica: sólo después de seleccionar la mejor lectura.
