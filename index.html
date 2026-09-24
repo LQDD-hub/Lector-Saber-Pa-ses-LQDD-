@@ -180,14 +180,52 @@ function abrirHistorial(idx){
 function pintarHist(){
   const h = cargarHist();
   document.getElementById("hist").innerHTML = h.length
-    ? h.map((x,i) => '<div class="item" data-idx="'+i+'" style="cursor:pointer">'+bandera(x.pais)+' <b>'+escHist(x.nombre||x.pais)+'</b>'
-        +(x.frase?' · <span style="color:#1e8e3e;font-weight:bold">'+escHist(x.frase)+'</span>':'')
-        +(x.fab?(x.fab.indexOf('según')===0?' · 🏷️ ':' · 🏭 ')+escHist(x.fab):'')
-        +(x.etiqueta?' · 🏷️ Datos de etiqueta guardados':'')
-        +'<small>'+escHist(x.codigo)+' · '+escHist(x.fecha)+'</small></div>').join("")
+    ? h.map((x,i) => {
+        let detalle="";
+        if(x.etiqueta){
+          const r=x.etiqueta||{};
+          const filas=[];
+          const add=(label,val,icon)=>{ if(val) filas.push("<div style='margin:4px 0'>"+icon+" <b>"+escHist(label)+":</b> "+escHist(val)+"</div>"); };
+          add("Fabricado en",r.fabricadoEn,"🏭");
+          add("Fabricante",r.fabricante,"🏢");
+          add("Envasado en",r.envasadoEn,"📦");
+          add("Envasado por",r.envasadoPor,"📦");
+          add("Importado por",r.importadoPor,"🚚");
+          add("Procesado",r.procesado,"⚙️");
+          add("Distribuido por",r.distribuidoPor,"🚛");
+          add("Etiquetado por",r.etiquetadoPor,"🏷️");
+          add("Acondicionado por",r.acondicionadoPor,"🔧");
+          add("Origen declarado",r.origen,"🌍");
+          add("Dirección",r.direccion,"📍");
+          add("Ciudad",r.ciudad,"🏙️");
+          add("Provincia",r.provincia,"🗺️");
+          add("País detectado",r.pais,"🌐");
+          add("Ingredientes",r.ingredientes,"🧪");
+          add("Alérgenos",r.alergenos,"⚠️");
+          detalle="<div class='histEtiquetaDetalle' style='display:none;margin-top:8px;padding:10px;background:#fff7d6;border:1px solid #e0c45c;border-radius:10px'>"+(filas.length?filas.join(""):"<small>No hay datos de etiqueta guardados.</small>")+"</div>";
+        }
+        return '<div class="item" data-idx="'+i+'" style="cursor:pointer">'+bandera(x.pais)+' <b>'+escHist(x.nombre||x.pais)+'</b>'
+          +(x.frase?' · <span style="color:#1e8e3e;font-weight:bold">'+escHist(x.frase)+'</span>':'')
+          +(x.fab?(x.fab.indexOf('según')===0?' · 🏷️ ':' · 🏭 ')+escHist(x.fab):'')
+          +(x.etiqueta?' <button type="button" class="histEtiquetaBtn" style="display:inline-block;width:auto;margin:5px 0 0;padding:5px 8px;background:#6b4e00;color:#fff;font-size:.82rem">🏷️ Datos de etiqueta <span>▼</span></button>':'')
+          +'<small>'+escHist(x.codigo)+' · '+escHist(x.fecha)+'</small>'+detalle+'</div>';
+      }).join("")
     : '<small>Aún no has escaneado nada.</small>';
+
   document.querySelectorAll("#hist .item").forEach(el=>{
     el.onclick = () => abrirHistorial(+el.getAttribute("data-idx"));
+  });
+  document.querySelectorAll("#hist .histEtiquetaBtn").forEach(btn=>{
+    btn.onclick = ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const box=btn.parentElement.querySelector(".histEtiquetaDetalle");
+      if(!box) return;
+      const abierto=box.style.display!=="none";
+      box.style.display=abierto?"none":"block";
+      const flecha=btn.querySelector("span");
+      if(flecha) flecha.textContent=abierto?"▼":"▲";
+    };
   });
 }
 document.getElementById("borrar").onclick = () => { try{ localStorage.removeItem("hist"); }catch(e){} pintarHist(); };
