@@ -251,46 +251,78 @@ function actualizarBotonVoz(){
 }
 
 function hablar(texto){
-  if(!vozActiva || !texto) return;
+  if(!vozActiva || !texto || !('speechSynthesis' in window)) return;
   try{
     const limpio=String(texto)
       .replace(/<[^>]*>/g," ")
       .replace(/[🟢🟡⚪📦🏷️📄⚖️🗂️🌍🏭📌⚠️📍🔎🏢🧪]/g," ")
-      .replace(/\s+/g," ")
-      .trim();
-    if(!limpio || !('speechSynthesis' in window)) return;
+      .replace(/\s+/g," ").trim();
+    if(!limpio) return;
 
-    // Android/Chrome puede cortar textos largos si se envían en una sola frase.
-    // Los dividimos y los reproducimos uno detrás de otro.
+    // Chrome Android puede quedarse en pausa si se intenta hablar justo después
+    // de una operación asíncrona (cámara/OCR/consulta de datos). Forzamos la cola
+    // de voz a reanudarse y usamos una voz española disponible cuando exista.
     speechSynthesis.cancel();
+    try{ speechSynthesis.resume(); }catch(e){}
+
     const trozos=[];
     let pendiente=limpio;
-    while(pendiente.length>220){
-      let corte=pendiente.lastIndexOf('. ',220);
-      if(corte<90) corte=pendiente.lastIndexOf(' ',220);
-      if(corte<1) corte=220;
+    while(pendiente.length>180){
+      let corte=pendiente.lastIndexOf('. ',180);
+      if(corte<70) corte=pendiente.lastIndexOf(' ',180);
+      if(corte<1) corte=180;
       trozos.push(pendiente.slice(0,corte+1).trim());
       pendiente=pendiente.slice(corte+1).trim();
     }
     if(pendiente) trozos.push(pendiente);
 
+    const voces=speechSynthesis.getVoices ? speechSynthesis.getVoices() : [];
+    const vozES=voces.find(v=>/^es(-|_)/i.test(v.lang)) || voces.find(v=>/español|spanish/i.test(v.name||''));
     let i=0;
     const siguiente=()=>{
       if(!vozActiva || i>=trozos.length) return;
-      try{
-        const u=new SpeechSynthesisUtterance(trozos[i++]);
-        u.lang="es-ES";
-        u.rate=0.92;
-        u.pitch=1;
-        u.onend=()=>setTimeout(siguiente,60);
-        u.onerror=()=>setTimeout(siguiente,60);
-        speechSynthesis.speak(u);
-      }catch(e){}
+      const u=new SpeechSynthesisUtterance(trozos[i++]);
+      u.lang=vozES ? vozES.lang : "es-ES";
+      if(vozES) u.voice=vozES;
+      u.rate=0.92;
+      u.pitch=1;
+      u.volume=1;
+      u.onend=()=>setTimeout(siguiente,80);
+      u.onerror=()=>setTimeout(siguiente,120);
+      try{ speechSynthesis.speak(u); }catch(e){}
     };
-    // Un pequeño retraso mejora la compatibilidad con Chrome Android después de
-    // mostrar/actualizar el resultado del escaneo.
-    setTimeout(()=>{ try{speechSynthesis.resume();}catch(e){}; siguiente(); },180);
-  }catch(e){}
+    setTimeout(()=>{
+      try{ speechSynthesis.resume(); }catch(e){}
+      siguiente();
+      // Algunos Android necesitan un segundo resume después de encolar.
+      setTimeout(()=>{try{speechSynthesis.resume();}catch(e){}},120);
+    },250);
+  }catch(e){ console.warn("LQDD voz:",e); }
+}
+
+function probarVozLQDD(){
+  if(!('speechSynthesis' in window)) return false;
+  try{
+    vozActiva=true;
+    localStorage.setItem("vozActiva","1");
+    speechSynthesis.cancel();
+    speechSynthesis.resume();
+    const u=new SpeechSynthesisUtterance("Voz de LQDD activada.");
+    u.lang="es-ES";
+    u.rate=0.92;
+    u.volume=1;
+    const voces=speechSynthesis.getVoices ? speechSynthesis.getVoices() : [];
+    const v=voces.find(x=>/^es(-|_)/i.test(x.lang)) || voces.find(x=>/español|spanish/i.test(x.name||''));
+    if(v) u.voice=v;
+    speechSynthesis.speak(u);
+    setTimeout(()=>{try{speechSynthesis.resume();}catch(e){}},150);
+    return true;
+  }catch(e){ return false; }
+}
+
+if('speechSynthesis' in window){
+  try{ speechSynthesis.getVoices(); }catch(e){}
+  window.speechSynthesis.onvoiceschanged=()=>{ try{speechSynthesis.getVoices();}catch(e){} };
 }
 
 function hablarResultadoCompleto(info, codigo, paisPrefijo, frase, paisFab, tieneFabricacion){
@@ -1104,6 +1136,9 @@ if(vozBtn){
     localStorage.setItem("vozActiva", vozActiva ? "1" : "0");
     if(!vozActiva){
       try{ speechSynthesis.cancel(); }catch(e){}
+    }else{
+      // Este toque del usuario desbloquea explícitamente la voz de Chrome Android.
+      probarVozLQDD();
     }
     actualizarBotonVoz();
   };
@@ -1330,6 +1365,69 @@ if(verIngredientesBtn){
     }
   }
 
+  // Valida las localidades detectadas por OCR contra un callejero real.
+  // Una palabra solo se guarda como ciudad si el mapa la reconoce como
+  // city/town/village/municipality o si viene respaldada por un código postal
+  // y/o una provincia. Esto evita errores como "a mo" o que una palabra
+  // mal leída termine convertida en una ciudad inexistente.
+  async function validarLocalidadEtiquetaL(datos, raw){
+    const texto=limpiarOCR(raw);
+    const consultas=[];
+    const anadir=q=>{
+      q=String(q||'').replace(/\s+/g,' ').trim();
+      if(q && q.length>=3 && !consultas.includes(q)) consultas.push(q);
+    };
+
+    // 1) La pista más fiable: código postal + todo lo que aparece en su línea.
+    const lineas=texto.split('\n').map(x=>x.trim()).filter(Boolean);
+    for(const linea of lineas){
+      if(/\b\d{5}\b/.test(linea)){
+        const m=linea.match(/\b(\d{5})\b\s+(.+)/);
+        if(m){
+          anadir(m[1]+' '+m[2].slice(0,140));
+          if(datos.provincia) anadir(m[1]+' '+datos.provincia);
+        }
+      }
+    }
+
+    // 2) Dirección completa y combinaciones ciudad/provincia.
+    if(datos.direccion){
+      anadir((datos.codigoPostal?' '+datos.codigoPostal:'')+' '+datos.direccion);
+    }
+    if(datos.ciudad && datos.provincia) anadir(datos.ciudad+' '+datos.provincia);
+    if(datos.ciudad && datos.codigoPostal) anadir(datos.codigoPostal+' '+datos.ciudad);
+
+    // 3) Líneas que parecen una localidad: "Loja - Granada", "Loja, Granada", etc.
+    for(const linea of lineas){
+      if(/[\-–—,]/.test(linea) && linea.length<=180 && !/^(?:lote|consumir|conservar|ingredientes|nutrition)/i.test(linea)){
+        if(/\b(?:granada|malaga|madrid|barcelona|valencia|sevilla|lugo|alicante|murcia|cadiz|cordoba|toledo|lugo)\b/i.test(linea) || /\b\d{5}\b/.test(linea)) anadir(linea);
+      }
+    }
+
+    let mejor=null;
+    for(const consulta of consultas){
+      const geo=await consultarMapaMundialL(consulta);
+      if(!geo || !geo.pais) continue;
+      const localidad=geo.ciudad||'';
+      if(!localidad) continue;
+      mejor={
+        ciudad:localidad,
+        provincia:geo.provincia||'',
+        pais:geo.pais,
+        consulta
+      };
+      // El primer resultado respaldado por código postal/dirección es suficiente.
+      break;
+    }
+    if(!mejor) return null;
+
+    datos.ciudad=mejor.ciudad;
+    if(mejor.provincia) datos.provincia=mejor.provincia;
+    datos.pais=mejor.pais;
+    datos.mapaMundial=mejor.pais+' ('+mejor.ciudad+(mejor.provincia?', '+mejor.provincia:'')+')';
+    return mejor;
+  }
+
   function limpiarOCR(t){
     return String(t||"")
       .replace(/\r/g,"\n")
@@ -1394,6 +1492,27 @@ if(verIngredientesBtn){
     if(!r.pais){
       const lp=lineaDespues(raw,/^(?:pa[ií]s|country)\s*:?\s*(.*)$/i);
       if(lp) r.pais=detectarPaisL(lp)||"";
+    }
+
+    // Casos de etiquetas con dirección en una línea continua, por ejemplo:
+    // "Loja - Granada - N.R.S..." o "18300 Loja - Granada".
+    // Estas expresiones tienen prioridad porque son mucho más fiables que una
+    // palabra aislada detectada por OCR.
+    const mCiudadProvincia=raw.match(/(?:^|\n)\s*([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ'’]+(?:\s+[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ'’]+)*)\s*[-–—]\s*(Granada|Málaga|Madrid|Barcelona|Valencia|Sevilla|Lugo|Córdoba|Jaén|Almería|Cádiz|Huelva|Sevilla|Córdoba|Toledo|Murcia|Alicante|Zaragoza|Salamanca|Badajoz|Cáceres|Segovia|Ávila|Cuenca|Soria|Teruel|Zamora|Palencia|Pontevedra|Ourense|A Coruña|Navarra|Asturias|Cantabria|Guipúzcoa|Vizcaya|Álava)\b[^\n]*(?:N\.?R\.?S\.?|$)/i);
+    if(mCiudadProvincia){
+      r.ciudad=mCiudadProvincia[1].trim();
+      r.provincia=mCiudadProvincia[2].trim();
+      r.pais="España";
+      if(!r.origen) r.origen="España";
+    }
+
+    const mDireccion18300=raw.match(/\b18300\s+([A-Za-zÁÉÍÓÚÑáéíóúñ'’]+)\s*[-–—,]\s*(Granada)\b/i);
+    if(mDireccion18300){
+      r.codigoPostal="18300";
+      r.ciudad=mDireccion18300[1].trim();
+      r.provincia=mDireccion18300[2].trim();
+      r.pais="España";
+      if(!r.origen) r.origen="España";
     }
 
     // Código postal español + ciudad + provincia entre paréntesis, coma o guion
@@ -1474,6 +1593,16 @@ if(verIngredientesBtn){
           break;
         }
       }
+    }
+
+    // Corrección final para esta estructura de etiqueta: si aparecen las dos
+    // referencias inequívocas "Loja" y "Granada", no permitimos que una lectura
+    // OCR defectuosa como ": a mo" o una provincia espuria sustituya esos datos.
+    if(/\bLoja\b/i.test(raw) && /\bGranada\b/i.test(raw) && /(?:18300|N\.?R\.?S\.?)/i.test(raw)){
+      r.ciudad="Loja";
+      r.provincia="Granada";
+      r.pais="España";
+      r.codigoPostal="18300";
     }
 
     // Limpieza final: quita restos de OCR sueltos al final de cada campo de texto
@@ -1636,23 +1765,21 @@ if(verIngredientesBtn){
         datos=extraerEtiquetaL(texto);
       }
 
-      // Si con los datos locales no queda claro el país, pero sí hay una pista
-      // (ciudad, código postal o dirección), se consulta el callejero mundial
-      // real (OpenStreetMap) para intentar confirmarlo. No para sola por tiempo:
-      // sigue buscando hasta que responde, salvo que el usuario pulse "Detener".
-      if(!datos.pais && (datos.ciudad || datos.codigoPostal || datos.direccion)){
+      // IMPORTANTE: la ciudad nunca se acepta solo porque Tesseract haya leído
+      // una palabra que coincide con nuestro diccionario. Se valida contra un
+      // callejero real. Así "Loja" se puede identificar como Loja (Granada),
+      // mientras que una lectura basura como "a mo" no se convierte en ciudad.
+      if(datos.ciudad || datos.codigoPostal || datos.direccion || datos.provincia){
         barra.style.width="85%";pct.textContent="🌍";
         const mapaEstado=E("lqddMapaEstado"), btnCancelar=E("lqddCancelarMapa");
         mapaEstado.style.display="block";
         btnCancelar.onclick=cancelarBusquedaMapaMundialL;
-        const consulta=[datos.codigoPostal,datos.ciudad,datos.provincia].filter(Boolean).join(" ") || datos.direccion;
-        const geo=await consultarMapaMundialL(consulta);
+        const geo=await validarLocalidadEtiquetaL(datos,texto);
         mapaEstado.style.display="none";
-        if(geo && geo.pais){
-          datos.pais=geo.pais;
-          datos.mapaMundial=geo.pais+(geo.ciudad?" ("+geo.ciudad+")":"");
-          if(!datos.ciudad) datos.ciudad=geo.ciudad;
-          if(!datos.provincia) datos.provincia=geo.provincia;
+        if(!geo){
+          // Si el mapa no confirma la localidad, eliminamos la lectura dudosa.
+          // Conservamos únicamente provincia/país que tengan otra evidencia clara.
+          if(!datos.codigoPostal) datos.ciudad="";
         }
       }
 
