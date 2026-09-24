@@ -743,6 +743,64 @@ async function consultarLQDDGlobal(codigo){
   }catch(e){ return null; }
 }
 
+// ---------- Memoria central por código de barras ----------
+// Recupera las aportaciones que LQDD ya guardó para ese GTIN.
+// Esto permite que un segundo teléfono vea la información aprendida
+// por el primero, sin depender de localStorage.
+async function consultarAportacionProductoLQDD(codigo){
+  const cod=String(codigo||"").replace(/\D/g,"");
+  if(!cod) return null;
+  try{
+    const path="/rest/v1/contributions?select=id,dato,created_at&codigo=eq."+encodeURIComponent(cod)+"&tipo_dato=eq.producto_escaneado&order=created_at.desc&limit=10";
+    let r=await lqddSupabaseFetch(path);
+    // Algunas instalaciones pueden no tener created_at.
+    if(!r.ok) r=await lqddSupabaseFetch("/rest/v1/contributions?select=id,dato&codigo=eq."+encodeURIComponent(cod)+"&tipo_dato=eq.producto_escaneado&limit=10");
+    if(!r.ok) return null;
+    const data=await r.json();
+    if(!Array.isArray(data) || !data.length) return null;
+
+    for(const row of data){
+      try{
+        let d=row&&row.dato;
+        if(typeof d==="string") d=JSON.parse(d);
+        if(d && typeof d==="object") return d;
+      }catch(e){}
+    }
+  }catch(e){
+    console.warn("LQDD: no se pudo consultar la memoria central del producto",e);
+  }
+  return null;
+}
+
+function fusionarInfoCentralProducto(info, dato){
+  if(!dato || typeof dato!=="object") return info||{};
+  const out=Object.assign({},info||{});
+
+  // Los datos guardados por LQDD tienen prioridad para la identificación
+  // de la referencia que ya fue comprobada por otro escaneo.
+  const campos=["nombre","marca","cantidad","categoria","origen","ingredientes","alergenos"];
+  campos.forEach(k=>{
+    if(dato[k] && String(dato[k]).trim()) out[k]=dato[k];
+  });
+
+  if(dato.fabricacion && typeof dato.fabricacion==="object"){
+    const f=dato.fabricacion;
+    if(f.pais || f.detalle || f.nivel){
+      out.prod=Object.assign({},out.prod||{},f);
+    }
+  }
+
+  // Si la etiqueta ya se guardó en el registro del producto, también la
+  // recuperamos desde la base central.
+  if(dato.etiqueta && typeof dato.etiqueta==="object"){
+    out.etiquetaL=Object.assign({},dato.etiqueta);
+  }
+
+  out._lqddCentral=true;
+  out._lqddCentralSource="Código de barras guardado en la base de datos LQDD";
+  return out;
+}
+
 // Los nuevos hallazgos se envían como aportaciones pendientes.
 // No se conceden al navegador permisos administrativos sobre las tablas principales.
 async function enviarAportacionLQDD(codigo, info){
@@ -751,6 +809,7 @@ async function enviarAportacionLQDD(codigo, info){
       codigo:String(codigo||""),
       tipo_dato:"producto_escaneado",
       dato:JSON.stringify({
+        version:2,
         nombre:info&&info.nombre||"",
         marca:info&&info.marca||"",
         cantidad:info&&info.cantidad||"",
@@ -758,7 +817,8 @@ async function enviarAportacionLQDD(codigo, info){
         fabricacion:info&&info.prod||null,
         origen:info&&info.ori||"",
         ingredientes:info&&info.ingredients||"",
-        alergenos:info&&info.alergenos||""
+        alergenos:info&&info.alergenos||"",
+        etiqueta:info&&info.etiquetaL||null
       }),
       fuente:"LQDD Scanner",
       estado:"pendiente"
@@ -996,7 +1056,17 @@ async function buscarProducto(codigo){
   const categoriaFinal=categoria || (globalLQDD&&globalLQDD.categoria) || "";
   const ingredientsFinal=ingredients || (globalLQDD&&globalLQDD.ingredients) || "";
   const alergenosFinal=alergenos || (globalLQDD&&globalLQDD.alergenos) || "";
-  return {nombre:nombreFinal,marca:marcaFinal,denominacion,cantidad:cantidadFinal,categoria:categoriaFinal,fab,ori,oriTags,emb,embTags,embOrig,packaging,customer,producer,ciudades,panels,prod,envasado,evidencias,fuentes:ps.length,ingredients:ingredientsFinal,alergenos:alergenosFinal};
+  let infoFinal={nombre:nombreFinal,marca:marcaFinal,denominacion,cantidad:cantidadFinal,categoria:categoriaFinal,fab,ori,oriTags,emb,embTags,embOrig,packaging,customer,producer,ciudades,panels,prod,envasado,evidencias,fuentes:ps.length,ingredients:ingredientsFinal,alergenos:alergenosFinal};
+
+  // ÚLTIMA CAPA: memoria central LQDD. Si otro teléfono ya escaneó y guardó
+  // este mismo código, recuperamos sus datos y los ponemos por delante de
+  // una fuente externa incompleta.
+  try{
+    const central=await consultarAportacionProductoLQDD(codigo);
+    if(central) infoFinal=fusionarInfoCentralProducto(infoFinal,central);
+  }catch(e){}
+
+  return infoFinal;
 }
 
 // País guardado en el móvil para un código (por ejemplo, leído de la etiqueta)
@@ -1178,6 +1248,17 @@ function pintar(silencio, sinGuardar){
   }
   $("fabrica").innerHTML=html;
   renderDatosEtiquetaGuardados(info.etiquetaL || null);
+  if(info._lqddCentral){
+    const boxCentral=$("datosEtiquetaGuardados");
+    if(boxCentral){
+      boxCentral.innerHTML =
+        "<div style='background:#e8f5e9;border:1px solid #58a66b;border-radius:10px;padding:10px;margin-bottom:8px'>" +
+        "<b>☁️ Datos recuperados de la base de datos LQDD</b>" +
+        "<div style='margin-top:4px;font-size:.9rem'>Esta información está asociada a este código de barras y puede verla otro teléfono.</div>" +
+        "</div>" +
+        boxCentral.innerHTML;
+    }
+  }
   const btnIng=$("verIngredientes"), boxIng=$("ingredientesBox");
   if(btnIng){
     btnIng.style.display=info.ingredients?"block":"none";
@@ -1196,7 +1277,9 @@ function pintar(silencio, sinGuardar){
     try{ snapshot=JSON.parse(JSON.stringify({prefijo,info,gs1Raw:actual.gs1Raw||""})); }catch(e){}
     guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1",
       {nombre:info.nombre||"", frase, snapshot});
-    if(!info._lqddGlobal && (info.nombre || info.marca || info.prod || info.ori)){
+    // Si ya hemos recuperado esta ficha de la base central, no creamos otra
+    // aportación idéntica. Solo enviamos datos cuando son nuevos.
+    if(!info._lqddGlobal && !info._lqddCentral && (info.nombre || info.marca || info.prod || info.ori)){
       enviarAportacionLQDD(codigo,info).catch(()=>{});
     }
   }
