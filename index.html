@@ -102,7 +102,6 @@
   </a>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <script>/* LQDD SCANNER: SIN ENLACES EXTERNOS NI NAVEGACION FUERA DE LA APP */</script>
 <script>
 // [desde, hasta, país] — prefijos GS1 de 3 dígitos
@@ -1086,9 +1085,11 @@ async function buscarProducto(codigo){
   if((p=detectar(fab))) evidencias.push({pais:p,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:fab});
   else if((p=paisDeTags(fabTags))) evidencias.push({pais:p,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:Array.isArray(fabTags)?fabTags.join(", "):String(fabTags)});
   else if(fab && String(fab).trim()){
-    const g=await ubicarLugar(fab,hintPais);
-    if(g) evidencias.push({pais:g.pais,nivel:g.ambiguo?"asociado":"confirmado",fuente:"Lugar de fabricación declarado (ubicado con OpenStreetMap)",detalle:String(fab)+" → "+g.lugar+(g.nota?" · "+g.nota:"")});
-    else evidencias.push({pais:null,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:String(fab)});
+    // No hacemos una consulta al mapa durante un escaneo de código de barras.
+    // Si el propio dato ya contiene un país, lo usamos directamente; el mapa
+    // queda reservado para el OCR de etiqueta cuando realmente sea necesario.
+    const paisDirecto=detectar(fab);
+    evidencias.push({pais:paisDirecto||null,nivel:"confirmado",fuente:"Lugar de fabricación declarado",detalle:String(fab)});
   }
   if(!evidencias.length && (p=deEtiqueta(labels))) evidencias.push({pais:p,nivel:"asociado",fuente:"Etiqueta de fabricación/origen del producto",detalle:String(labels)});
   const sanitario=String(emb||embOrig||"");
@@ -1346,36 +1347,99 @@ function pintar(silencio, sinGuardar){
 if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
 const btn = document.getElementById("btn");
 const estadoEscaneo = document.getElementById("estadoEscaneo");
-let scanner, activo=false, ultimo="";
+let scanner=null, activo=false, ultimo="", streamNativo=null, videoNativo=null, rafNativo=0;
+
+function cargarScriptLQDD(src){
+  return new Promise((resolve,reject)=>{
+    const existente=document.querySelector('script[data-lqdd-src="'+src+'"]');
+    if(existente){existente.addEventListener('load',resolve,{once:true}); existente.addEventListener('error',reject,{once:true}); if(window.Html5Qrcode) resolve(); return;}
+    const s=document.createElement("script");
+    s.src=src; s.async=true; s.dataset.lqddSrc=src;
+    s.onload=resolve; s.onerror=()=>reject(new Error("No se pudo cargar el lector de códigos"));
+    document.head.appendChild(s);
+  });
+}
+
+async function pararNativo(){
+  if(rafNativo){cancelAnimationFrame(rafNativo);rafNativo=0;}
+  if(videoNativo){try{videoNativo.pause();}catch(e){}; try{videoNativo.srcObject=null;}catch(e){}; videoNativo.remove(); videoNativo=null;}
+  if(streamNativo){try{streamNativo.getTracks().forEach(t=>t.stop());}catch(e){} streamNativo=null;}
+}
 
 async function parar(){
-  if(!activo)return; activo=false;
-  try{await scanner.stop();scanner.clear();}catch(e){}
+  if(!activo && !streamNativo && !scanner)return;
+  activo=false;
+  await pararNativo();
+  if(scanner){try{await scanner.stop();}catch(e){} try{scanner.clear();}catch(e){} scanner=null;}
   btn.textContent="📷 Escanear otro";
   if(estadoEscaneo)estadoEscaneo.textContent="📷 Escanea el código para identificarlo";
+}
+
+async function iniciarNativo(){
+  if(!("BarcodeDetector" in window) || !navigator.mediaDevices?.getUserMedia) return false;
+  let formatos=["ean_13","ean_8","upc_a","upc_e"];
+  try{
+    if(BarcodeDetector.getSupportedFormats){
+      const soportados=await BarcodeDetector.getSupportedFormats();
+      formatos=formatos.filter(f=>soportados.includes(f));
+    }
+  }catch(e){return false;}
+  if(!formatos.length)return false;
+  try{
+    const detector=new BarcodeDetector({formats:formatos});
+    videoNativo=document.createElement("video");
+    videoNativo.setAttribute("autoplay",""); videoNativo.setAttribute("muted",""); videoNativo.setAttribute("playsinline","");
+    videoNativo.style.width="100%"; videoNativo.style.display="block"; videoNativo.style.borderRadius="12px"; videoNativo.style.background="#000";
+    const lector=document.getElementById("lector"); lector.innerHTML=""; lector.appendChild(videoNativo);
+    streamNativo=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},audio:false});
+    videoNativo.srcObject=streamNativo;
+    await videoNativo.play();
+    const detectarFrame=async()=>{
+      if(!activo || !videoNativo)return;
+      try{
+        const codes=await detector.detect(videoNativo);
+        if(codes && codes.length){
+          const txt=codes[0].rawValue||"";
+          if(txt){await parar(); if(navigator.vibrate)navigator.vibrate(100); mostrar(txt); return;}
+        }
+      }catch(e){}
+      rafNativo=requestAnimationFrame(detectarFrame);
+    };
+    rafNativo=requestAnimationFrame(detectarFrame);
+    return true;
+  }catch(e){
+    await pararNativo();
+    const lector=document.getElementById("lector"); if(lector)lector.innerHTML="";
+    return false;
+  }
 }
 
 async function iniciar(){
   if(activo)return; activo=true;
   btn.textContent="Parar cámara";
   if(estadoEscaneo)estadoEscaneo.textContent="📷 Buscando código...";
-  scanner=new Html5Qrcode("lector",{formatsToSupport:[
-    Html5QrcodeSupportedFormats.EAN_13,
-    Html5QrcodeSupportedFormats.EAN_8,
-    Html5QrcodeSupportedFormats.UPC_A,
-    Html5QrcodeSupportedFormats.UPC_E,
-    ...(Html5QrcodeSupportedFormats.QR_CODE!==undefined?[Html5QrcodeSupportedFormats.QR_CODE]:[]),
-    ...(Html5QrcodeSupportedFormats.DATA_MATRIX!==undefined?[Html5QrcodeSupportedFormats.DATA_MATRIX]:[])
-  ],experimentalFeatures:{useBarCodeDetectorIfSupported:true},verbose:false});
+
+  // Primero usamos BarcodeDetector nativo: no descarga ninguna librería y suele
+  // ser más rápido. Solo descargamos html5-qrcode como respaldo si el móvil no lo soporta.
+  if(await iniciarNativo()) return;
+
   try{
-    await scanner.start({facingMode:"environment"},{fps:6,qrbox:{width:300,height:160}},async txt=>{
+    await cargarScriptLQDD("https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js");
+    scanner=new Html5Qrcode("lector",{formatsToSupport:[
+      Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.EAN_8,
+      Html5QrcodeSupportedFormats.UPC_A,
+      Html5QrcodeSupportedFormats.UPC_E
+    ],experimentalFeatures:{useBarCodeDetectorIfSupported:true},verbose:false});
+    await scanner.start({facingMode:"environment"},{fps:5,qrbox:{width:280,height:130}},async txt=>{
       if(!activo)return;
       await parar();
-      if(navigator.vibrate)navigator.vibrate(150);
+      if(navigator.vibrate)navigator.vibrate(100);
       mostrar(txt);
     });
   }catch(e){
-    activo=false; btn.textContent="Activar cámara";
+    activo=false; await pararNativo();
+    btn.textContent="Activar cámara";
     if(estadoEscaneo)estadoEscaneo.textContent="📷 Escanea el código para identificarlo";
     alert("No se pudo abrir la cámara. Revisa los permisos (hace falta https).");
   }
@@ -1426,8 +1490,7 @@ if(verIngredientesBtn){
 }
 </script>
 
-<!-- LQDD: librería OCR aislada. No modifica el escáner de códigos existente. -->
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<!-- LQDD: OCR se carga solo al pulsar "Leer etiqueta" para mantener la app ligera. -->
 <script>
 (function(){
   "use strict";
@@ -1781,6 +1844,19 @@ if(verIngredientesBtn){
       if(!r.origen) r.origen="España";
     }
 
+    // Dirección comercial/fabricante en una sola línea, por ejemplo:
+    // "COCEDA, S.L., C/ de la Máquina 31. 08850 Gavà (Barcelona), España".
+    // Si existe esta estructura, la tratamos como evidencia directa de la etiqueta.
+    const lineaEmpresaDir=raw.match(/([^\n]{2,120}\b(?:S\.?L\.?|S\.?A\.?|S\.?L\.?U\.?|S\.?COOP\.?)\b[^\n]*?\b(\d{5})\s+([^,\n(]+)\s*\(([^)]+)\)\s*,?\s*(España|Spain|Francia|France|Portugal|Italia|Italy|Alemania|Germany)\b)/i);
+    if(lineaEmpresaDir){
+      if(!r.fabricante) r.fabricante=lineaEmpresaDir[1].trim().replace(/[,;:]+$/,'');
+      if(!r.codigoPostal) r.codigoPostal=lineaEmpresaDir[2];
+      if(!r.ciudad) r.ciudad=lineaEmpresaDir[3].trim();
+      if(!r.provincia) r.provincia=lineaEmpresaDir[4].trim();
+      if(!r.pais) r.pais=detectarPaisL(lineaEmpresaDir[5])||lineaEmpresaDir[5];
+      if(!r.origen && r.pais) r.origen=r.pais;
+    }
+
     // Código postal español + ciudad + provincia entre paréntesis, coma o guion
     // (las etiquetas usan formatos distintos: "18300 Loja, Granada", "18300 Loja
     // (Granada)" o "18300 Loja – Granada", con guion largo).
@@ -2118,12 +2194,28 @@ if(verIngredientesBtn){
     return !!(r.fabricadoEn||r.fabricante||r.envasadoEn||r.envasadoPor||r.importadoPor||r.procesado||r.distribuidoPor||r.etiquetadoPor||r.acondicionadoPor||r.origen||r.direccion||r.ciudad||r.provincia||r.pais||r.ingredientes);
   }
 
+  let tesseractPromiseL=null;
+  function cargarTesseractL(){
+    if(window.Tesseract) return Promise.resolve();
+    if(tesseractPromiseL) return tesseractPromiseL;
+    tesseractPromiseL=new Promise((resolve,reject)=>{
+      const src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+      const s=document.createElement("script");
+      s.src=src; s.async=true;
+      s.onload=()=>window.Tesseract?resolve():reject(new Error("OCR no disponible"));
+      s.onerror=()=>reject(new Error("No se pudo cargar el OCR"));
+      document.head.appendChild(s);
+    });
+    return tesseractPromiseL;
+  }
+
   async function leerEtiquetaL(file){
     const estado=E("lqddEstadoEtiqueta"), barra=E("lqddBarraEtiqueta"), pct=E("lqddPorcentajeEtiqueta"), res=E("lqddResultadoEtiqueta");
     estado.style.display="block";res.style.display="none";barra.style.width="2%";pct.textContent="2%";
     let worker=null;
     try{
       if(!file) return;
+      await cargarTesseractL();
       if(!window.Tesseract) throw new Error("OCR no disponible");
 
       const variantes=await prepararVariantesEtiquetaL(file);
@@ -2171,8 +2263,11 @@ if(verIngredientesBtn){
         if(calidadOCRL(ret2,t2,d2)>calidadOCRL({data:{confidence:mejor.conf}},texto,datos)){texto=t2;datos=d2;}
       }
 
-      // Validación geográfica: sólo después de seleccionar la mejor lectura.
-      if(datos.ciudad || datos.codigoPostal || datos.direccion || datos.provincia){
+      // El texto de la etiqueta manda. Si ya tenemos empresa + dirección/localidad
+      // + provincia + país, NO llamamos al mapa: ahorramos tiempo y evitamos que
+      // OpenStreetMap sustituya una lectura correcta por una localidad equivocada.
+      const etiquetaSuficiente=!!(datos.pais && (datos.ciudad||datos.codigoPostal) && (datos.provincia||datos.direccion) && (datos.fabricante||datos.envasadoPor||datos.distribuidoPor));
+      if(!etiquetaSuficiente && (datos.ciudad || datos.codigoPostal || datos.direccion || datos.provincia)){
         barra.style.width="85%";pct.textContent="🌍";
         const mapaEstado=E("lqddMapaEstado"), btnCancelar=E("lqddCancelarMapa");
         mapaEstado.style.display="block";
