@@ -1080,7 +1080,7 @@ if(verIngredientesBtn){
   // Ciudades conocidas -> país. Sirve para deducir el país aunque la etiqueta
   // no lo escriba explícitamente (solo pone la ciudad).
   const ciudadesL = [
-    ["Madrid","España"],["Barcelona","España"],["Valencia","España"],["Sevilla","España"],
+    ["Madrid","España"],["Barcelona","España"],["Valencia","España"],["Oliva","España"],["Sevilla","España"],
     ["Zaragoza","España"],["Málaga","España"],["Murcia","España"],["Palma de Mallorca","España"],
     ["Palma","España"],["Bilbao","España"],["Alicante","España"],["Córdoba","España"],
     ["Valladolid","España"],["Vigo","España"],["Gijón","España"],["Granada","España"],["Loja","España"],["Motril","España"],["Baza","España"],["Guadix","España"],
@@ -1119,11 +1119,25 @@ if(verIngredientesBtn){
     ["São Paulo","Brasil"],["Sao Paulo","Brasil"],["Río de Janeiro","Brasil"],["Rio de Janeiro","Brasil"]
   ];
   function detectarCiudadL(texto){
-    const t=normL(texto);
+    const raw=String(texto||"");
+    const lineas=normL(raw).split("\n").map(x=>x.trim()).filter(Boolean);
     let mejor=null,pos=Infinity;
+
+    // No buscar ciudades como simples subcadenas: "aroma" contiene "roma".
+    // Solo aceptamos el nombre como palabra completa y priorizamos líneas
+    // que realmente parecen contener una dirección o una localización.
+    const contexto=/(?:\b\d{4,6}\b|carretera|calle|avenida|av\.|paseo|plaza|camino|domicilio|direccion|address|street|road|highway|fabricad[oa]|envasad[oa]|embasad[oa]|producid[oa]|elaborad[oa]|manufactured|made\s+in|produced\s+in|\bkm\.?\s*\d)/i;
+
     for(const [ciudad,pais] of ciudadesL){
-      const i=t.indexOf(normL(ciudad));
-      if(i>=0 && i<pos){pos=i;mejor={ciudad,pais};}
+      const c=normL(ciudad).replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+      const re=new RegExp("(^|[^a-z])"+c+"(?=[^a-z]|$)","i");
+      for(let i=0;i<lineas.length;i++){
+        if(!contexto.test(lineas[i]) && lineas[i]!==normL(ciudad)) continue;
+        if(re.test(lineas[i])){
+          const posLinea=raw.toLowerCase().indexOf(lineas[i]);
+          if(posLinea>=0 && posLinea<pos){pos=posLinea;mejor={ciudad,pais};}
+        }
+      }
     }
     return mejor;
   }
@@ -1233,16 +1247,29 @@ if(verIngredientesBtn){
     // (Granada)" o "18300 Loja – Granada", con guion largo).
     // Si el código empieza por 01-52, es formato español: la provincia se saca
     // directamente de la tabla oficial (PROV), no de lo que haya escrito la OCR.
-    const cp=/\b(\d{5})\s+([^,\-–—\n(]+?)\s*(?:\(([^)\n]+)\)|[,\-–—]\s*([A-Za-zÁÉÍÓÚáéíóúÑñ]+(?:\s[A-Za-zÁÉÍÓÚáéíóúÑñ]+)*))?(?=\s*$|\n)/i.exec(raw);
+    const cp=/\b(\d{5})\b([^\n]*)/i.exec(raw);
     if(cp){
       r.codigoPostal=cp[1];
-      r.ciudad=(cp[2]||"").trim();
+      let resto=String(cp[2]||"").trim();
+      // Formatos habituales: "46780 Oliva (Valencia) España",
+      // "46780 Oliva, Valencia" o "46780 Oliva - Valencia".
+      let ciudadCP=resto;
+      const par=ciudadCP.match(/^([^(\-,–—]+?)\s*\(/);
+      if(par) ciudadCP=par[1].trim();
+      else ciudadCP=ciudadCP.split(/[,–—-]/)[0].trim();
+      ciudadCP=ciudadCP.replace(/\b(?:españa|spain|espagne|spanien)\b\.?$/i,"").trim();
+      ciudadCP=ciudadCP.replace(/[.,]+$/,"").trim();
+      // Si el OCR dejó "Oliva (Valencia)", lo anterior ya deja solo "Oliva".
+      // Si quedan varias palabras antes del país, conservamos la población completa.
+      if(ciudadCP) r.ciudad=ciudadCP;
+
       const prefijo=cp[1].slice(0,2);
       if(typeof PROV!=="undefined" && PROV[prefijo]){
         r.provincia=PROV[prefijo];
         r.pais="España";
       }else{
-        r.provincia=(cp[3]||cp[4]||"").trim();
+        const mProv=resto.match(/\(([^)\n]+)\)/);
+        r.provincia=(mProv&&mProv[1]||"").trim();
         if(!r.pais) r.pais=detectarPaisL(raw);
       }
     }else{
@@ -1252,11 +1279,18 @@ if(verIngredientesBtn){
       if(cpg) r.codigoPostal=cpg[1];
     }
 
+
     // Si hay una declaración explícita, el país de fabricación/envasado se extrae de esa declaración.
     if(r.fabricadoEn) r.fabricadoEn=detectarPaisL(r.fabricadoEn)||r.fabricadoEn;
     if(r.envasadoEn) r.envasadoEn=detectarPaisL(r.envasadoEn)||r.envasadoEn;
     if(!r.origen) r.origen=detectarPaisL(raw)||"";
     if(!r.pais) r.pais=detectarPaisL(raw)||"";
+
+    // Si la etiqueta dice "Fabricado por" y además proporciona una dirección
+    // española, mostramos España como ubicación del fabricante.
+    if(!r.fabricadoEn && r.fabricante && r.pais==="España" && (r.direccion || r.codigoPostal || r.provincia)){
+      r.fabricadoEn="España";
+    }
 
     // Si no hay país (o falta la ciudad), buscamos si aparece el nombre de alguna
     // ciudad conocida en el mundo y deducimos el país a partir de ella (como pista,
@@ -1431,7 +1465,7 @@ if(verIngredientesBtn){
         const mapaEstado=E("lqddMapaEstado"), btnCancelar=E("lqddCancelarMapa");
         mapaEstado.style.display="block";
         btnCancelar.onclick=cancelarBusquedaMapaMundialL;
-        const consulta=[datos.codigoPostal,datos.ciudad||datos.direccion].filter(Boolean).join(" ");
+        const consulta=[datos.codigoPostal,datos.ciudad,datos.provincia].filter(Boolean).join(" ") || datos.direccion;
         const geo=await consultarMapaMundialL(consulta);
         mapaEstado.style.display="none";
         if(geo && geo.pais){
