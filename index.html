@@ -253,18 +253,43 @@ function actualizarBotonVoz(){
 function hablar(texto){
   if(!vozActiva || !texto) return;
   try{
-    speechSynthesis.cancel();
     const limpio=String(texto)
       .replace(/<[^>]*>/g," ")
-      .replace(/[🟢🟡⚪📦🏷️📄⚖️🗂️🌍🏭📌⚠️📍🔎🏢📦🧪]/g," ")
+      .replace(/[🟢🟡⚪📦🏷️📄⚖️🗂️🌍🏭📌⚠️📍🔎🏢🧪]/g," ")
       .replace(/\s+/g," ")
       .trim();
-    if(!limpio) return;
-    const u = new SpeechSynthesisUtterance(limpio);
-    u.lang = "es-ES";
-    u.rate = 0.95;
-    u.pitch = 1;
-    speechSynthesis.speak(u);
+    if(!limpio || !('speechSynthesis' in window)) return;
+
+    // Android/Chrome puede cortar textos largos si se envían en una sola frase.
+    // Los dividimos y los reproducimos uno detrás de otro.
+    speechSynthesis.cancel();
+    const trozos=[];
+    let pendiente=limpio;
+    while(pendiente.length>220){
+      let corte=pendiente.lastIndexOf('. ',220);
+      if(corte<90) corte=pendiente.lastIndexOf(' ',220);
+      if(corte<1) corte=220;
+      trozos.push(pendiente.slice(0,corte+1).trim());
+      pendiente=pendiente.slice(corte+1).trim();
+    }
+    if(pendiente) trozos.push(pendiente);
+
+    let i=0;
+    const siguiente=()=>{
+      if(!vozActiva || i>=trozos.length) return;
+      try{
+        const u=new SpeechSynthesisUtterance(trozos[i++]);
+        u.lang="es-ES";
+        u.rate=0.92;
+        u.pitch=1;
+        u.onend=()=>setTimeout(siguiente,60);
+        u.onerror=()=>setTimeout(siguiente,60);
+        speechSynthesis.speak(u);
+      }catch(e){}
+    };
+    // Un pequeño retraso mejora la compatibilidad con Chrome Android después de
+    // mostrar/actualizar el resultado del escaneo.
+    setTimeout(()=>{ try{speechSynthesis.resume();}catch(e){}; siguiente(); },180);
   }catch(e){}
 }
 
@@ -292,6 +317,26 @@ function hablarResultadoCompleto(info, codigo, paisPrefijo, frase, paisFab, tien
   if(info && info.customer) partes.push("Datos de empresa: "+info.customer);
   if(info && info.ingredients) partes.push("Ingredientes: "+info.ingredients);
   if(info && info.alergenos) partes.push("Alérgenos: "+info.alergenos);
+  const et=info && info.etiquetaL;
+  if(et){
+    partes.push("Información de la etiqueta guardada.");
+    if(et.fabricadoEn) partes.push("Fabricado en: "+et.fabricadoEn);
+    if(et.fabricante) partes.push("Fabricante: "+et.fabricante);
+    if(et.envasadoEn) partes.push("Envasado en: "+et.envasadoEn);
+    if(et.envasadoPor) partes.push("Envasado por: "+et.envasadoPor);
+    if(et.importadoPor) partes.push("Importado por: "+et.importadoPor);
+    if(et.procesado) partes.push("Procesado: "+et.procesado);
+    if(et.distribuidoPor) partes.push("Distribuido por: "+et.distribuidoPor);
+    if(et.etiquetadoPor) partes.push("Etiquetado por: "+et.etiquetadoPor);
+    if(et.acondicionadoPor) partes.push("Acondicionado por: "+et.acondicionadoPor);
+    if(et.origen) partes.push("Origen declarado en la etiqueta: "+et.origen);
+    if(et.direccion) partes.push("Dirección: "+et.direccion);
+    if(et.ciudad) partes.push("Ciudad: "+et.ciudad);
+    if(et.provincia) partes.push("Provincia: "+et.provincia);
+    if(et.pais) partes.push("País detectado en la etiqueta: "+et.pais);
+    if(et.ingredientes) partes.push("Ingredientes de la etiqueta: "+et.ingredientes);
+    if(et.alergenos) partes.push("Alérgenos de la etiqueta: "+et.alergenos);
+  }
   if(info && info.evidencias && info.evidencias.length>1){
     info.evidencias.slice(0,4).forEach(e=>{
       if(e && (e.pais || e.detalle)) partes.push("Evidencia adicional: "+(e.pais||"")+(e.detalle?". "+e.detalle:""));
@@ -820,6 +865,26 @@ async function buscarProducto(codigo){
 function cargarFab(c){ try{ return JSON.parse(localStorage.getItem("fab_"+c)||"null"); }catch(e){ return null; } }
 function guardarFab(c,p){ try{ localStorage.setItem("fab_"+c, JSON.stringify(p)); }catch(e){} }
 
+// Etiquetas OCR guardadas por código de producto. Así, al volver a escanear
+// el mismo producto no es necesario volver a fotografiar la etiqueta.
+function cargarEtiquetaGuardada(c){
+  try{
+    const cod=String(c||"").replace(/\D/g,"");
+    if(!cod) return null;
+    const directa=JSON.parse(localStorage.getItem("etiqueta_"+cod)||"null");
+    if(directa && typeof directa==="object") return directa;
+    const h=cargarHist();
+    const e=h.find(x=>String(x.codigo)===cod && x.etiqueta);
+    return e&&e.etiqueta ? e.etiqueta : null;
+  }catch(e){ return null; }
+}
+function guardarEtiquetaPorCodigo(c,r){
+  try{
+    const cod=String(c||"").replace(/\D/g,"");
+    if(cod && r && typeof r==="object") localStorage.setItem("etiqueta_"+cod,JSON.stringify(r));
+  }catch(e){}
+}
+
 let actual = null; // {codigo, prefijo, info}
 const $ = id => document.getElementById(id);
 
@@ -833,7 +898,14 @@ async function mostrar(codigo){
   $("frase").textContent=""; $("fabrica").textContent=""; $("origen").textContent=""; $("fabricadoEn").textContent=""; $("gs1Datos").innerHTML=""; $("datosEtiquetaGuardados").innerHTML="";
   if(!prefijo){ $("pais").textContent="Código no válido"; hablar("Código no válido"); return; }
   $("pais").textContent="🔎 Consultando información del producto...";
-  const info=await buscarProducto(codigoProducto); actual={codigo:codigoProducto,prefijo,info,gs1Raw}; window.LQDD_getCodigoActual=()=>actual&&actual.codigo; pintar();
+  const info=await buscarProducto(codigoProducto);
+  // Recuperar automáticamente la etiqueta que ya se leyó anteriormente.
+  // Primero usamos la copia rápida por código y después el historial como respaldo.
+  const etiquetaGuardada=cargarEtiquetaGuardada(codigoProducto);
+  if(etiquetaGuardada){
+    info.etiquetaL=Object.assign({},etiquetaGuardada);
+  }
+  actual={codigo:codigoProducto,prefijo,info,gs1Raw}; window.LQDD_getCodigoActual=()=>actual&&actual.codigo; pintar();
 }
 
 
@@ -970,7 +1042,11 @@ function pintar(silencio, sinGuardar){
   if(boxIng){ boxIng.style.display="none"; boxIng.innerHTML=""; }
   if(!silencio && !sinGuardar){ if(paisPrefijo==="España") fanfarriaEspana(); if(paisPrefijo==="Marruecos") pitidoEmergencia(); }
   const detalle=tieneFabricacion?(info.prod.nivel==="confirmado"?"El producto tiene un dato de fabricación declarado en "+paisFab:(info.prod.voz||"Hay una evidencia asociada a un establecimiento en "+paisFab+", pero no demuestra por sí sola la fabricación")):"El prefijo GS1 corresponde a "+paisPrefijo+", pero no hay una evidencia pública suficiente para confirmar dónde se fabricó.";
-  if(!sinGuardar) hablarResultadoCompleto(info,codigo,paisPrefijo,frase,paisFab,tieneFabricacion);
+  if(!sinGuardar){
+    // La voz debe leer también la información de la etiqueta que se recuperó
+    // automáticamente al volver a escanear el mismo producto.
+    hablarResultadoCompleto(info,codigo,paisPrefijo,frase,paisFab,tieneFabricacion);
+  }
   if(!sinGuardar){
     let snapshot=null;
     try{ snapshot=JSON.parse(JSON.stringify({prefijo,info,gs1Raw:actual.gs1Raw||""})); }catch(e){}
@@ -1456,6 +1532,10 @@ if(verIngredientesBtn){
     if(window.renderDatosEtiquetaGuardados) window.renderDatosEtiquetaGuardados(r);
     try{
       const codigoActual = window.LQDD_getCodigoActual ? window.LQDD_getCodigoActual() : null;
+      if(codigoActual) guardarEtiquetaPorCodigo(codigoActual,r);
+      // La etiqueta queda guardada incluso aunque el historial todavía no tenga
+      // una entrada para ese código. Si existe, además actualizamos el historial.
+
       if(codigoActual){
         const h=cargarHist();
         const i=h.findIndex(x=>String(x.codigo)===String(codigoActual));
