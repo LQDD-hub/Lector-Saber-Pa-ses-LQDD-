@@ -55,6 +55,10 @@
       <div id="lqddBarraEtiqueta" style="width:0%;height:100%;background:#1e9e3a;transition:width .25s"></div>
     </div>
     <small id="lqddPorcentajeEtiqueta">0%</small>
+    <div id="lqddMapaEstado" style="display:none;margin-top:8px;font-size:.9rem">
+      🗺️ Buscando la ciudad/país en el mapa mundial...
+      <button id="lqddCancelarMapa" type="button" style="width:auto;margin:6px 0 0;padding:6px 10px;background:#6b4e00;color:#fff">⏹ Detener búsqueda</button>
+    </div>
   </div>
   <div id="lqddResultadoEtiqueta" style="display:none;margin-top:10px;text-align:left;background:#c9f5cf;border:2px solid #1e9e3a;border-radius:10px;padding:10px">
     <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
@@ -977,6 +981,40 @@ if(verIngredientesBtn){
     return mejor;
   }
 
+  // "Diccionario mundial" de ciudades y códigos postales: en vez de guardar dentro
+  // de la app una lista gigante (que nunca cubriría todas las ciudades del mundo y
+  // pesaría mucho), se consulta el callejero mundial abierto de OpenStreetMap
+  // solo cuando hace falta y solo si hay conexión. No tiene un límite de tiempo
+  // fijo: sigue buscando hasta que responde, y solo se detiene si el propio
+  // usuario pulsa "Detener búsqueda".
+  let controladorMapaMundialL=null;
+  function cancelarBusquedaMapaMundialL(){
+    if(controladorMapaMundialL){ controladorMapaMundialL.abort(); controladorMapaMundialL=null; }
+  }
+  async function consultarMapaMundialL(consulta){
+    if(!consulta) return null;
+    const ac=new AbortController();
+    controladorMapaMundialL=ac;
+    try{
+      const url="https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&addressdetails=1&accept-language=es&q="+encodeURIComponent(consulta);
+      const resp=await fetch(url,{signal:ac.signal});
+      if(!resp.ok) return null;
+      const arr=await resp.json();
+      const it=Array.isArray(arr)?arr[0]:null;
+      if(!it || !it.address) return null;
+      const ad=it.address;
+      return {
+        ciudad:ad.city||ad.town||ad.village||ad.municipality||"",
+        provincia:ad.state||ad.province||ad.county||"",
+        pais:ad.country||""
+      };
+    }catch(e){
+      return null;
+    }finally{
+      if(controladorMapaMundialL===ac) controladorMapaMundialL=null;
+    }
+  }
+
   function limpiarOCR(t){
     return String(t||"")
       .replace(/\r/g,"\n")
@@ -1004,7 +1042,7 @@ if(verIngredientesBtn){
     const r={fabricadoEn:"",fabricante:"",envasadoEn:"",envasadoPor:"",
       importadoPor:"",procesado:"",distribuidoPor:"",etiquetadoPor:"",
       acondicionadoPor:"",origen:"",direccion:"",ciudad:"",provincia:"",
-      pais:"",ingredientes:"",alergenos:"",raw};
+      pais:"",codigoPostal:"",mapaMundial:"",ingredientes:"",alergenos:"",raw};
 
     r.fabricadoEn=lineaDespues(raw,/(?:(?:fabricad[oa]|hech[oa]|cread[oa]|elaborad[oa])\s+en|manufactured\s+in|made\s+in|produced\s+in|producid[oa]\s+en)\s*(.*)$/i);
     if(!r.fabricadoEn){
@@ -1044,11 +1082,25 @@ if(verIngredientesBtn){
     }
 
     // Código postal español + ciudad + provincia entre paréntesis.
+    // Si el código empieza por 01-52, es formato español: la provincia se saca
+    // directamente de la tabla oficial (PROV), no de lo que haya escrito la OCR.
     const cp=/\b(\d{5})\s+([^,\n(]+?)(?:\s*\(([^)\n]+)\))?(?:,\s*([A-Za-zÁÉÍÓÚáéíóúÑñ ]+))?(?=\s*$|\n)/i.exec(raw);
     if(cp){
+      r.codigoPostal=cp[1];
       r.ciudad=(cp[2]||"").trim();
-      r.provincia=(cp[3]||"").trim();
-      if(!r.pais) r.pais=detectarPaisL(raw);
+      const prefijo=cp[1].slice(0,2);
+      if(typeof PROV!=="undefined" && PROV[prefijo]){
+        r.provincia=PROV[prefijo];
+        r.pais="España";
+      }else{
+        r.provincia=(cp[3]||"").trim();
+        if(!r.pais) r.pais=detectarPaisL(raw);
+      }
+    }else{
+      // Cualquier otro código postal (aunque no sea español) que sirva de pista
+      // para preguntar al mapa mundial más adelante.
+      const cpg=/\b(\d{4,6}(?:-\d{3})?|[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2})\b/i.exec(raw);
+      if(cpg) r.codigoPostal=cpg[1];
     }
 
     // Si hay una declaración explícita, el país de fabricación/envasado se extrae de esa declaración.
@@ -1089,6 +1141,7 @@ if(verIngredientesBtn){
     add("Ciudad",r.ciudad,"🏙️");
     add("Provincia",r.provincia,"🗺️");
     add("País detectado",r.pais,"🌐");
+    if(r.mapaMundial) filas.push("<div style='margin:5px 0;font-size:.85rem;color:#5a4200'>🗺️ Según el mapa mundial (OpenStreetMap): "+escL(r.mapaMundial)+" <i>(pista, no una declaración de la etiqueta)</i></div>");
     E("lqddTextoEtiqueta").innerHTML=filas.length?filas.join(""):"<small>No he encontrado una declaración clara en la etiqueta. Puedes hacer otra foto más cercana y con buena luz.</small>";
 
     if(window.renderDatosEtiquetaGuardados) window.renderDatosEtiquetaGuardados(r);
@@ -1192,6 +1245,26 @@ if(verIngredientesBtn){
         ret=await worker.recognize(imagen2);
         texto=String(ret&&ret.data&&ret.data.text||"");
         datos=extraerEtiquetaL(texto);
+      }
+
+      // Si con los datos locales no queda claro el país, pero sí hay una pista
+      // (ciudad, código postal o dirección), se consulta el callejero mundial
+      // real (OpenStreetMap) para intentar confirmarlo. No para sola por tiempo:
+      // sigue buscando hasta que responde, salvo que el usuario pulse "Detener".
+      if(!datos.pais && (datos.ciudad || datos.codigoPostal || datos.direccion)){
+        barra.style.width="85%";pct.textContent="🌍";
+        const mapaEstado=E("lqddMapaEstado"), btnCancelar=E("lqddCancelarMapa");
+        mapaEstado.style.display="block";
+        btnCancelar.onclick=cancelarBusquedaMapaMundialL;
+        const consulta=[datos.codigoPostal,datos.ciudad||datos.direccion].filter(Boolean).join(" ");
+        const geo=await consultarMapaMundialL(consulta);
+        mapaEstado.style.display="none";
+        if(geo && geo.pais){
+          datos.pais=geo.pais;
+          datos.mapaMundial=geo.pais+(geo.ciudad?" ("+geo.ciudad+")":"");
+          if(!datos.ciudad) datos.ciudad=geo.ciudad;
+          if(!datos.provincia) datos.provincia=geo.provincia;
+        }
       }
 
       // Si OCR sí leyó texto pero no encontró una etiqueta estándar, mostramos el texto útil.
