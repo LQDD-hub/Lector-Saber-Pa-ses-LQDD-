@@ -483,7 +483,119 @@ async function buscarPorCodigoEnBusquedaInterna(codigo, campos){
   return encontrados;
 }
 
+
+// ---------- Base de datos mundial LQDD / Supabase ----------
+const LQDD_SUPABASE_URL = "https://pizyrjnoilygnxcojppk.supabase.co";
+const LQDD_SUPABASE_KEY = "sb_publishable_J8Vb_pIfMZgtFOe9CdQlGg_T1HCx4Ji";
+
+async function lqddSupabaseFetch(path, options={}){
+  const ac=new AbortController();
+  const t=setTimeout(()=>ac.abort(),7000);
+  try{
+    return await fetch(LQDD_SUPABASE_URL + path, {
+      ...options,
+      signal:ac.signal,
+      headers:{
+        "apikey":LQDD_SUPABASE_KEY,
+        "Authorization":"Bearer "+LQDD_SUPABASE_KEY,
+        "Accept":"application/json",
+        ...(options.headers||{})
+      }
+    });
+  }finally{ clearTimeout(t); }
+}
+
+function lqddGlobalToInfo(row){
+  if(!row) return null;
+  const rel=Array.isArray(row.product_locations)?row.product_locations:[];
+  const evid=rel.map(x=>{
+    const loc=x.locations||null, comp=x.companies||null;
+    const lugar=[loc&&loc.ciudad,loc&&loc.provincia_estado,loc&&loc.pais].filter(Boolean).join(", ");
+    const empresa=comp&&comp.nombre ? " · "+comp.nombre : "";
+    const pais=x.pais_declarado || (loc&&loc.pais) || null;
+    return {
+      pais,
+      nivel:Number(x.evidencia_nivel||6)<=3?"confirmado":"asociado",
+      fuente:"Base de datos mundial LQDD",
+      detalle:[lugar,empresa].filter(Boolean).join("") || "Registro LQDD"
+    };
+  }).filter(x=>x.pais);
+
+  const prod=evid.sort((a,b)=>(a.nivel==="confirmado"?0:1)-(b.nivel==="confirmado"?0:1))[0]||null;
+  return {
+    nombre:row.nombre||"",
+    marca:row.marca||"",
+    denominacion:"",
+    cantidad:row.cantidad||"",
+    categoria:row.categoria||"",
+    fab:prod&&prod.detalle||"",
+    ori:"",
+    oriTags:[],
+    emb:"",
+    embTags:[],
+    embOrig:"",
+    packaging:"",
+    customer:"",
+    producer:"",
+    ciudades:"",
+    panels:"",
+    prod,
+    envasado:null,
+    evidencias:evid,
+    fuentes:1,
+    ingredients:row.ingredientes||"",
+    alergenos:row.alergenos||"",
+    _lqddGlobal:true
+  };
+}
+
+async function consultarLQDDGlobal(codigo){
+  const cod=String(codigo||"").replace(/\D/g,"");
+  if(!cod) return null;
+  try{
+    const path="/rest/v1/products?select=*,product_locations(*,companies(*),locations(*))&gtin=eq."+encodeURIComponent(cod)+"&limit=1";
+    const r=await lqddSupabaseFetch(path);
+    if(!r.ok) return null;
+    const data=await r.json();
+    return Array.isArray(data)&&data[0] ? lqddGlobalToInfo(data[0]) : null;
+  }catch(e){ return null; }
+}
+
+// Los nuevos hallazgos se envían como aportaciones pendientes.
+// No se conceden al navegador permisos administrativos sobre las tablas principales.
+async function enviarAportacionLQDD(codigo, info){
+  try{
+    const payload={
+      codigo:String(codigo||""),
+      tipo_dato:"producto_escaneado",
+      dato:JSON.stringify({
+        nombre:info&&info.nombre||"",
+        marca:info&&info.marca||"",
+        cantidad:info&&info.cantidad||"",
+        categoria:info&&info.categoria||"",
+        fabricacion:info&&info.prod||null,
+        origen:info&&info.ori||"",
+        ingredientes:info&&info.ingredients||"",
+        alergenos:info&&info.alergenos||""
+      }),
+      fuente:"LQDD Scanner",
+      estado:"pendiente"
+    };
+    const r=await lqddSupabaseFetch("/rest/v1/contributions",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Prefer":"return=minimal"},
+      body:JSON.stringify(payload)
+    });
+    return r.ok;
+  }catch(e){ return false; }
+}
+
 async function buscarProducto(codigo){
+  // Primero consultamos el conocimiento mundial de LQDD.
+  // Después contrastamos/completamos con las bases abiertas que ya utiliza la app.
+  let globalLQDD=null;
+  try{ globalLQDD=await consultarLQDDGlobal(codigo); }catch(e){}
+
   const bases=["openfoodfacts","openbeautyfacts","openproductsfacts"];
   const campos="product_name,abbreviated_product_name,generic_name,brands,quantity,product_quantity,product_quantity_unit,categories,categories_tags,manufacturing_places,manufacturing_places_tags,cities_tags,origins,origins_tags,origin,labels,labels_tags,emb_codes,emb_codes_tags,emb_codes_orig,packaging_text,customer_service,producer,stores,link,knowledge_panels,ingredients_text,ingredients_text_es,allergens,allergens_tags";
   const res=await Promise.all(bases.map(async b=>{
@@ -499,6 +611,23 @@ async function buscarProducto(codigo){
 
   let ps=res.filter(Boolean);
   const has=v=>v&&((Array.isArray(v)&&v.length)||(!Array.isArray(v)&&String(v).trim()));
+
+  // Los datos mundiales de LQDD se incorporan como una fuente adicional.
+  // Las fuentes abiertas pueden completar los campos que falten.
+  if(globalLQDD){
+    ps.unshift({
+      product_name:globalLQDD.nombre,
+      brands:globalLQDD.marca,
+      quantity:globalLQDD.cantidad,
+      categories:globalLQDD.categoria,
+      manufacturing_places:globalLQDD.fab,
+      origins:globalLQDD.ori,
+      ingredients_text:globalLQDD.ingredients,
+      allergens:globalLQDD.alergenos,
+      _lqddInfo:globalLQDD,
+      _lqddGlobal:true
+    });
+  }
 
   // Refuerzo interno: si la consulta directa por código no encontró el producto,
   // o lo encontró pero le faltan marca/nombre/fabricación, se busca ese MISMO
@@ -583,7 +712,16 @@ async function buscarProducto(codigo){
   // Elegimos la evidencia de mayor calidad. Directa > asociada.
   const prioridad={confirmado:3,asociado:2};
   evidencias.sort((a,b)=>(prioridad[b.nivel]||0)-(prioridad[a.nivel]||0));
-  const prod=evidencias.find(x=>x.pais)||null;
+  let prod=evidencias.find(x=>x.pais)||null;
+  if(!prod && globalLQDD && globalLQDD.prod) prod=globalLQDD.prod;
+  if(globalLQDD && Array.isArray(globalLQDD.evidencias)){
+    for(const e of globalLQDD.evidencias){
+      if(!evidencias.some(x=>x.fuente===e.fuente && x.pais===e.pais)){
+        evidencias.push(e);
+      }
+    }
+  }
+  evidencias.sort((a,b)=>(prioridad[b.nivel]||0)-(prioridad[a.nivel]||0));
 
   let envasado=null;
   const ep=String(emb||embOrig||"");
@@ -591,7 +729,13 @@ async function buscarProducto(codigo){
   else if(embInfo) envasado=embInfo;
   else if((p=deEmb(embTags))) envasado={pais:p,fuente:"Código de establecimiento/envasador",nivel:"asociado",detalle:String(embTags)};
 
-  return {nombre,marca,denominacion,cantidad,categoria,fab,ori,oriTags,emb,embTags,embOrig,packaging,customer,producer,ciudades,panels,prod,envasado,evidencias,fuentes:ps.length,ingredients,alergenos};
+  const nombreFinal=nombre || (globalLQDD&&globalLQDD.nombre) || "";
+  const marcaFinal=marca || (globalLQDD&&globalLQDD.marca) || "";
+  const cantidadFinal=cantidad || (globalLQDD&&globalLQDD.cantidad) || "";
+  const categoriaFinal=categoria || (globalLQDD&&globalLQDD.categoria) || "";
+  const ingredientsFinal=ingredients || (globalLQDD&&globalLQDD.ingredients) || "";
+  const alergenosFinal=alergenos || (globalLQDD&&globalLQDD.alergenos) || "";
+  return {nombre:nombreFinal,marca:marcaFinal,denominacion,cantidad:cantidadFinal,categoria:categoriaFinal,fab,ori,oriTags,emb,embTags,embOrig,packaging,customer,producer,ciudades,panels,prod,envasado,evidencias,fuentes:ps.length,ingredients:ingredientsFinal,alergenos:alergenosFinal};
 }
 
 // País guardado en el móvil para un código (por ejemplo, leído de la etiqueta)
@@ -754,6 +898,9 @@ function pintar(silencio, sinGuardar){
     try{ snapshot=JSON.parse(JSON.stringify({prefijo,info,gs1Raw:actual.gs1Raw||""})); }catch(e){}
     guardar(codigo,desconocido?"Desconocido":paisPrefijo,tieneFabricacion?"fabricado en "+paisFab:"prefijo GS1",
       {nombre:info.nombre||"", frase, snapshot});
+    if(!info._lqddGlobal && (info.nombre || info.marca || info.prod || info.ori)){
+      enviarAportacionLQDD(codigo,info).catch(()=>{});
+    }
   }
 }
 
