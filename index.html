@@ -157,6 +157,16 @@ function normalizarCodigoProducto(codigo){
   return c;
 }
 
+// Códigos compatibles para migrar datos antiguos (por ejemplo UPC-A de 12
+// dígitos que una versión anterior pudo guardar sin el cero inicial).
+function codigosCompatiblesLQDD(codigo){
+  const c=normalizarCodigoProducto(codigo);
+  const out=[];
+  if(c) out.push(c);
+  if(c.length===13 && c.startsWith("0")) out.push(c.slice(1));
+  return [...new Set(out)];
+}
+
 // Historial (se guarda en el propio móvil)
 function escHist(s){ return String(s??"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function cargarHist(){ try{ return JSON.parse(localStorage.getItem("hist")||"[]"); }catch(e){ return []; } }
@@ -834,7 +844,8 @@ async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
     codigo:cod,
     tipo_dato:"etiqueta_ocr",
     dato:JSON.stringify({
-      version:2,
+      version:3,
+      revision:Date.now(),
       codigo:cod,
       etiqueta:Object.assign({},etiqueta),
       fuente_lectura:"OCR LQDD Scanner"
@@ -843,33 +854,41 @@ async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
     estado:"pendiente"
   };
 
-  // Buscar TODOS los registros del mismo código. Si por una versión anterior
-  // quedaron duplicados, los actualizamos todos con la lectura más reciente.
-  const consulta="/rest/v1/contributions?select=id&codigo=eq."+encodeURIComponent(cod)+"&tipo_dato=eq.etiqueta_ocr";
-  let r=await lqddSupabaseFetch(consulta);
-  if(!r.ok){
-    const detalle=await r.text().catch(()=>"");
-    throw new Error("La base de datos no permite consultar la etiqueta (HTTP "+r.status+"). "+detalle.slice(0,180));
+  // IMPORTANTE: una etiqueta pertenece al GTIN, no al teléfono ni a la fecha.
+  // Buscamos tanto el GTIN normalizado como su antiguo formato de 12 dígitos y
+  // ACTUALIZAMOS TODOS los registros que existan. Así las etiquetas antiguas
+  // no pueden reaparecer por culpa de duplicados creados por versiones previas.
+  const codigos=codigosCompatiblesLQDD(cod);
+  const ids=[];
+  for(const c of codigos){
+    const q="/rest/v1/contributions?select=id&codigo=eq."+encodeURIComponent(c)+"&tipo_dato=eq.etiqueta_ocr";
+    const r=await lqddSupabaseFetch(q);
+    if(!r.ok){
+      const detalle=await r.text().catch(()=>"");
+      throw new Error("La base de datos no permite consultar la etiqueta (HTTP "+r.status+"). "+detalle.slice(0,180));
+    }
+    const rows=await r.json().catch(()=>[]);
+    if(Array.isArray(rows)) for(const row of rows){
+      if(row && row.id!=null && !ids.includes(row.id)) ids.push(row.id);
+    }
   }
-  const datos=await r.json().catch(()=>[]);
-  const ids=Array.isArray(datos)?datos.map(x=>x&&x.id).filter(x=>x!=null):[];
 
   if(ids.length){
     for(const id of ids){
-      r=await lqddSupabaseFetch("/rest/v1/contributions?id=eq."+encodeURIComponent(id),{
+      const r=await lqddSupabaseFetch("/rest/v1/contributions?id=eq."+encodeURIComponent(id),{
         method:"PATCH",
         headers:{"Content-Type":"application/json","Prefer":"return=minimal"},
         body:JSON.stringify(payload)
       });
       if(!r.ok){
         const detalle=await r.text().catch(()=>"");
-        throw new Error("No se pudo actualizar la etiqueta en Supabase (HTTP "+r.status+"). "+detalle.slice(0,180));
+        throw new Error("No se pudo SOBRESCRIBIR la etiqueta en Supabase (HTTP "+r.status+"). "+detalle.slice(0,180));
       }
     }
     return true;
   }
 
-  r=await lqddSupabaseFetch("/rest/v1/contributions",{
+  const r=await lqddSupabaseFetch("/rest/v1/contributions",{
     method:"POST",
     headers:{"Content-Type":"application/json","Prefer":"return=minimal"},
     body:JSON.stringify(payload)
@@ -926,21 +945,38 @@ async function guardarProductoCentralLQDD(codigo, info){
 async function consultarEtiquetaCentralLQDD(codigo){
   const cod=normalizarCodigoProducto(codigo);
   if(!cod) return null;
-  const base="/rest/v1/contributions?select=dato&codigo=eq."+encodeURIComponent(cod)+"&tipo_dato=eq.etiqueta_ocr";
+
+  // Leemos TODOS los registros compatibles y elegimos la lectura con mayor
+  // revisión/versión. Esto evita que un registro viejo vuelva a aparecer si
+  // quedaron duplicados de una versión anterior de la aplicación.
+  const candidatas=[];
   try{
-    let r=await lqddSupabaseFetch(base+"&order=created_at.desc&limit=1");
-    if(!r.ok) r=await lqddSupabaseFetch(base+"&limit=1");
-    if(r.ok){
-      const data=await r.json();
-      if(Array.isArray(data) && data[0] && data[0].dato){
-        let dato=data[0].dato;
-        if(typeof dato==="string") dato=JSON.parse(dato);
-        if(dato && dato.etiqueta && typeof dato.etiqueta==="object") return Object.assign({},dato.etiqueta,{_fuenteCentral:true});
+    for(const c of codigosCompatiblesLQDD(cod)){
+      const base="/rest/v1/contributions?select=id,dato&codigo=eq."+encodeURIComponent(c)+"&tipo_dato=eq.etiqueta_ocr";
+      const r=await lqddSupabaseFetch(base);
+      if(!r.ok) continue;
+      const data=await r.json().catch(()=>[]);
+      if(!Array.isArray(data)) continue;
+      for(const row of data){
+        if(!row || !row.dato) continue;
+        try{
+          let dato=row.dato;
+          if(typeof dato==="string") dato=JSON.parse(dato);
+          if(dato && dato.etiqueta && typeof dato.etiqueta==="object") candidatas.push({
+            etiqueta:dato.etiqueta,
+            revision:Number(dato.revision)||0,
+            version:Number(dato.version)||0,
+            id:row.id
+          });
+        }catch(_e){}
       }
     }
+    candidatas.sort((a,b)=>(b.revision-a.revision)||(b.version-a.version));
+    if(candidatas[0]) return Object.assign({},candidatas[0].etiqueta,{_fuenteCentral:true});
   }catch(e){
     console.warn("LQDD: no se pudo consultar la etiqueta central",e);
   }
+
   // Si la ficha todavía no existe en Supabase, recuperamos la semilla conocida.
   const semilla=lqddEtiquetaSemilla(cod);
   if(semilla) return Object.assign({},semilla,{_fuenteSemilla:true});
@@ -1807,8 +1843,11 @@ if(verIngredientesBtn){
     // Si hay una declaración explícita, el país de fabricación/envasado se extrae de esa declaración.
     if(r.fabricadoEn) r.fabricadoEn=detectarPaisL(r.fabricadoEn)||r.fabricadoEn;
     if(r.envasadoEn) r.envasadoEn=detectarPaisL(r.envasadoEn)||r.envasadoEn;
-    if(!r.origen) r.origen=detectarPaisL(raw)||"";
-    if(!r.pais) r.pais=detectarPaisL(raw)||"";
+    // NO usamos detectarPaisL(raw) como origen: una etiqueta puede mencionar
+    // un país en publicidad, marca o texto comercial (por ejemplo "Viva España")
+    // sin declarar que el producto sea originario de ese país. El origen sólo se
+    // acepta desde una declaración explícita o desde una localidad/código postal
+    // de la propia etiqueta.
 
     // Si la etiqueta dice "Fabricado por" y además proporciona una dirección
     // española, mostramos España como ubicación del fabricante.
@@ -1859,9 +1898,18 @@ if(verIngredientesBtn){
     // Limpieza final: quita restos de OCR sueltos al final de cada campo de texto
     // libre (una coma o una barra que se queda colgando al final de la línea).
     const limpiarCola=s=>String(s||"").replace(/[\s,|·•;:\-–—]+$/,"").trim();
+    const limpiarCampoEtiqueta=s=>{
+      let v=limpiarCola(s);
+      // Tesseract a veces devuelve basura como ". ( a»" después de "Fabricado por".
+      // Nunca guardamos una cadena si casi no contiene letras útiles.
+      const letras=(v.match(/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/g)||[]).length;
+      const utiles=(v.match(/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9]/g)||[]).length;
+      if(letras<3 || (v.length>=4 && utiles/v.length<0.45)) return "";
+      return v.replace(/^[\s:;,.|·•»«]+|[\s:;,.|·•»«]+$/g,"").trim();
+    };
     for(const k of ["fabricadoEn","fabricante","envasadoEn","envasadoPor","importadoPor",
       "procesado","distribuidoPor","etiquetadoPor","acondicionadoPor","direccion","ciudad","provincia"]){
-      r[k]=limpiarCola(r[k]);
+      r[k]=limpiarCampoEtiqueta(r[k]);
     }
 
     return r;
@@ -1937,8 +1985,54 @@ if(verIngredientesBtn){
         if(aviso) aviso.innerHTML="<div style='padding:10px;background:#fff7d6;border:1px solid #e0c45c;border-radius:10px'><b>☁️ Guardando etiqueta en la base de datos LQDD…</b></div>";
         try{
           await guardarEtiquetaCentralLQDD(codigoActual,r);
+
+          // La nueva lectura pasa a ser inmediatamente la ficha activa, la
+          // caché local y la única entrada de ese GTIN en el historial.
+          r=Object.assign({},r);
+          if(actual && normalizarCodigoProducto(actual.codigo)===normalizarCodigoProducto(codigoActual)){
+            actual.info=actual.info||{};
+            actual.info.etiquetaL=Object.assign({},r);
+          }
           guardarEtiquetaPorCodigo(codigoActual,r);
-          if(aviso) aviso.innerHTML="<div style='padding:10px;background:#e8f5e9;border:1px solid #58a66b;border-radius:10px'><b>☁️✅ Etiqueta guardada en la base de datos LQDD</b><div style='margin-top:4px;font-size:.9rem'>Código: "+escL(codigoActual)+" · Disponible para otros teléfonos al escanearlo.</div></div>";
+
+          const hNueva=cargarHist();
+          const codigoN=normalizarCodigoProducto(codigoActual);
+          let entrada=hNueva.find(x=>normalizarCodigoProducto(x.codigo)===codigoN);
+          if(!entrada){
+            entrada={codigo:codigoN,pais:actual&&actual.prefijo||"",fab:"prefijo GS1",fecha:new Date().toLocaleString("es-ES"),nombre:(actual&&actual.info&&actual.info.nombre)||"",frase:"",snapshot:null,etiqueta:null};
+            hNueva.unshift(entrada);
+          }
+          entrada.codigo=codigoN;
+          entrada.etiqueta=Object.assign({},r);
+          entrada.fecha=new Date().toLocaleString("es-ES");
+          if(actual){
+            entrada.snapshot={prefijo:actual.prefijo,info:JSON.parse(JSON.stringify(actual.info||{})),gs1Raw:actual.gs1Raw||""};
+            entrada.snapshot.info.etiquetaL=Object.assign({},r);
+            entrada.nombre=actual.info&&actual.info.nombre||entrada.nombre||"";
+          }
+          const unicos=[];
+          let visto=false;
+          for(const x of hNueva){
+            if(normalizarCodigoProducto(x.codigo)!==codigoN){
+              unicos.push(x);
+              continue;
+            }
+            if(!visto){
+              unicos.push(x);
+              visto=true;
+            }
+          }
+          localStorage.setItem("hist",JSON.stringify(unicos.slice(0,50)));
+          pintarHist();
+
+          // Mantener también la ficha central del producto sincronizada con la
+          // etiqueta recién sobrescrita.
+          if(actual){
+            try{ await guardarProductoCentralLQDD(codigoActual,actual.info); }
+            catch(e){ console.warn("LQDD: etiqueta guardada, pero no se pudo sincronizar la ficha de producto",e); }
+          }
+
+          if(aviso) aviso.innerHTML="<div style='padding:10px;background:#e8f5e9;border:1px solid #58a66b;border-radius:10px'><b>☁️✅ Etiqueta SOBRESCRITA en la base de datos LQDD</b><div style='margin-top:4px;font-size:.9rem'>Código: "+escL(codigoActual)+" · La nueva lectura sustituye a la anterior y queda disponible para otros teléfonos.</div></div>";
         }catch(err){
           console.error("LQDD: guardado central fallido",err);
           if(aviso) aviso.innerHTML="<div style='padding:10px;background:#ffebee;border:1px solid #d32f2f;border-radius:10px'><b>⚠️ La etiqueta NO se ha guardado en la base de datos</b><div style='margin-top:4px;font-size:.9rem'>"+escL(err&&err.message||"Error de conexión o permisos en Supabase")+"</div></div>";
