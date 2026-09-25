@@ -707,51 +707,6 @@ function paisDeTags(tags){
 // ---------- Ubicar un lugar (ciudad, pueblo, provincia) y saber a qué país pertenece ----------
 // Provincia española según las dos primeras cifras del número sanitario (ES 18.xxxxx/GR = Granada)
 const PROV = {"01":"Álava","02":"Albacete","03":"Alicante","04":"Almería","05":"Ávila","06":"Badajoz","07":"Baleares","08":"Barcelona","09":"Burgos","10":"Cáceres","11":"Cádiz","12":"Castellón","13":"Ciudad Real","14":"Córdoba","15":"A Coruña","16":"Cuenca","17":"Girona","18":"Granada","19":"Guadalajara","20":"Gipuzkoa","21":"Huelva","22":"Huesca","23":"Jaén","24":"León","25":"Lleida","26":"La Rioja","27":"Lugo","28":"Madrid","29":"Málaga","30":"Murcia","31":"Navarra","32":"Ourense","33":"Asturias","34":"Palencia","35":"Las Palmas","36":"Pontevedra","37":"Salamanca","38":"Santa Cruz de Tenerife","39":"Cantabria","40":"Segovia","41":"Sevilla","42":"Soria","43":"Tarragona","44":"Teruel","45":"Toledo","46":"Valencia","47":"Valladolid","48":"Bizkaia","49":"Zamora","50":"Zaragoza","51":"Ceuta","52":"Melilla"};
-function codigosPais(nombre){ return String(nombre||"").split(" / ").map(n=>ISO[n.trim()]).filter(Boolean); }
-async function ubicarLugar(texto,paisHint){
-  const q=String(texto||"").split(/[;|\n]/)[0].trim();
-  if(q.length<2) return null;
-  const ac=new AbortController(), t=setTimeout(()=>ac.abort(),8000);
-  try{
-    const r=await fetch("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&addressdetails=1&accept-language=es&q="+encodeURIComponent(q),{signal:ac.signal});
-    if(!r.ok) return null;
-    const arr=await r.json();
-    const cand=(Array.isArray(arr)?arr:[]).filter(x=>x&&x.address&&x.address.country_code).map(x=>({cc:x.address.country_code.toUpperCase(),pais:x.address.country,lugar:x.display_name}));
-    if(!cand.length) return null;
-    const ambiguo=new Set(cand.map(c=>c.cc)).size>1;
-    let e=cand[0], nota="";
-    if(ambiguo){
-      const h=codigosPais(paisHint), c=cand.find(c=>h.includes(c.cc));
-      if(c){ e=c; nota="Hay varios lugares con ese nombre; elegimos el del país del código de barras"; }
-      else nota="Hay varios lugares con ese nombre; puede no ser este";
-    }
-    return {pais:e.pais,lugar:e.lugar,ambiguo,nota};
-  }catch(err){ return null; }
-  finally{ clearTimeout(t); }
-}
-
-async function buscarPorCodigoEnBusquedaInterna(codigo, campos){
-  const cod=String(codigo||"").trim();
-  if(!cod) return [];
-  const bases=["openfoodfacts","openbeautyfacts","openproductsfacts"];
-  const camposConCode="code,"+campos;
-  const urls=bases.map(b=>"https://world."+b+".org/cgi/search.pl?action=process&json=1&search_simple=1&page_size=10&fields="+encodeURIComponent(camposConCode)+"&search_terms="+encodeURIComponent(cod));
-  const respuestas=await Promise.all(urls.map(async u=>{
-    const ac=new AbortController(), t=setTimeout(()=>ac.abort(),9000);
-    try{
-      const r=await fetch(u,{signal:ac.signal});
-      if(!r.ok) return null;
-      return await r.json();
-    }catch(e){ return null; } finally{ clearTimeout(t); }
-  }));
-  const encontrados=[];
-  for(const d of respuestas){
-    for(const p of ((d&&d.products)||[])){
-      if(p && String(p.code||"")===cod) encontrados.push(p);
-    }
-  }
-  return encontrados;
-}
 
 
 // ---------- Base de datos mundial LQDD / Supabase ----------
@@ -838,35 +793,6 @@ async function consultarLQDDGlobal(codigo){
     const data=await r.json();
     return Array.isArray(data)&&data[0] ? lqddGlobalToInfo(data[0]) : null;
   }catch(e){ return null; }
-}
-
-// Los nuevos hallazgos se envían como aportaciones pendientes.
-// No se conceden al navegador permisos administrativos sobre las tablas principales.
-async function enviarAportacionLQDD(codigo, info){
-  try{
-    const payload={
-      codigo:normalizarCodigoProducto(codigo),
-      tipo_dato:"producto_escaneado",
-      dato:JSON.stringify({
-        nombre:info&&info.nombre||"",
-        marca:info&&info.marca||"",
-        cantidad:info&&info.cantidad||"",
-        categoria:info&&info.categoria||"",
-        fabricacion:info&&info.prod||null,
-        origen:info&&info.ori||"",
-        ingredientes:info&&info.ingredients||"",
-        alergenos:info&&info.alergenos||""
-      }),
-      fuente:"LQDD Scanner",
-      estado:"pendiente"
-    };
-    const r=await lqddSupabaseFetch("/rest/v1/contributions",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","Prefer":"return=minimal"},
-      body:JSON.stringify(payload)
-    });
-    return r.ok;
-  }catch(e){ return false; }
 }
 
 // Datos de etiquetas ya verificados que deben estar disponibles en cualquier teléfono.
@@ -1105,11 +1031,6 @@ function guardarProductoCache(codigo,info){
     if(cod && info) localStorage.setItem("producto_"+cod,JSON.stringify({ts:Date.now(),info}));
   }catch(e){}
 }
-function infoProductoSuficiente(info){
-  if(!info) return false;
-  return !!(info.nombre||info.marca||info.fabricante||info.ingredients||info.prod||info.ori||info.etiquetaL);
-}
-
 async function buscarProducto(codigo){
   const cached=cargarProductoCache(codigo);
   if(cached) return cached;
@@ -1212,10 +1133,6 @@ async function buscarProducto(codigo){
   guardarProductoCache(codigo,info);
   return info;
 }
-
-// País guardado en el móvil para un código (por ejemplo, leído de la etiqueta)
-function cargarFab(c){ try{ return JSON.parse(localStorage.getItem("fab_"+c)||"null"); }catch(e){ return null; } }
-function guardarFab(c,p){ try{ localStorage.setItem("fab_"+c, JSON.stringify(p)); }catch(e){} }
 
 // Etiquetas OCR guardadas por código de producto. Así, al volver a escanear
 // el mismo producto no es necesario volver a fotografiar la etiqueta.
@@ -1350,12 +1267,6 @@ function extraerGS1(raw){
   }
   out.es2D=!!(out.origen||out.inicial||/^(https?:\/\/)/i.test(t));
   return out;
-}
-// Extrae señales GS1 que pueden ayudar a identificar la empresa/localización sin hacer
-// una consulta lenta. No confunde el prefijo del EAN con el fabricante.
-function senalesEmpresaGS1(raw){
-  const d=extraerGS1(raw);
-  return {gtin:d.gtin||null,gln:d.glnProduccion||null};
 }
 
 function pintarGS1(raw){
@@ -1913,6 +1824,19 @@ if(verIngredientesBtn){
     }
   }
 
+  // Un resultado del mapa solo se acepta si viene respaldado por ALGO fuerte:
+  // un país ya conocido (la búsqueda ya viene restringida a él), un código
+  // postal real leído en la etiqueta, o una ciudad que de verdad se parece a
+  // la localidad devuelta. Sin ninguno de esos tres, no se acepta nada: mejor
+  // dejar el dato sin confirmar que adivinar un país al azar (como pasó con
+  // un pueblo de Eslovaquia o, después, uno de Armenia).
+  function geoEsConfiableL(datos, codigoPaisHint, geo){
+    if(codigoPaisHint) return true;
+    if(datos.codigoPostal) return true;
+    if(datos.ciudad && geo && geo.ciudad) return pareceLaMismaLocalidadL(datos.ciudad, geo.ciudad);
+    return false;
+  }
+
   // Valida las localidades detectadas por OCR contra un callejero real.
   // Una palabra solo se guarda como ciudad si el mapa la reconoce como
   // city/town/village/municipality o si viene respaldada por un código postal
@@ -1943,8 +1867,7 @@ if(verIngredientesBtn){
         codigoPostal:datos.codigoPostal,
         pais:paisDeclarado
       },codigoPaisHint);
-      if(geoEstr && geoEstr.pais && geoEstr.ciudad &&
-         (codigoPaisHint || !datos.ciudad || pareceLaMismaLocalidadL(datos.ciudad,geoEstr.ciudad))){
+      if(geoEstr && geoEstr.pais && geoEstr.ciudad && geoEsConfiableL(datos,codigoPaisHint,geoEstr)){
         if(geoEstr.calle) datos.direccion=geoEstr.calle;
         datos.ciudad=geoEstr.ciudad;
         if(!datos.provincia && geoEstr.provincia) datos.provincia=geoEstr.provincia;
@@ -1953,6 +1876,7 @@ if(verIngredientesBtn){
         return geoEstr;
       }
     }
+
 
 
     // 1) La pista más fiable: código postal + todo lo que aparece en su línea.
@@ -1994,7 +1918,7 @@ if(verIngredientesBtn){
       // una palabra mal leída por el OCR puede coincidir por casualidad con
       // un pueblo remoto de otro país. Exigimos que la localidad devuelta se
       // parezca de verdad a la ciudad que la etiqueta parecía decir.
-      if(!codigoPaisHint && datos.ciudad && !pareceLaMismaLocalidadL(datos.ciudad,localidad)) continue;
+      if(!geoEsConfiableL(datos,codigoPaisHint,{ciudad:localidad})) continue;
       mejor={
         ciudad:localidad,
         provincia:geo.provincia||'',
@@ -2146,6 +2070,18 @@ if(verIngredientesBtn){
       const par=ciudadCP.match(/^([^(\-,–—]+?)\s*\(/);
       if(par) ciudadCP=par[1].trim();
       else ciudadCP=ciudadCP.split(/[,–—-]/)[0].trim();
+      // Si detrás del nombre de la ciudad viene el país pegado sin coma ni
+      // guion de por medio (p. ej. "Bissingen. Alemania / Alemanha y"), lo
+      // cortamos ahí: la ciudad no debe arrastrar el país ni restos de OCR.
+      const paisPegado=detectarPaisL(ciudadCP);
+      if(paisPegado){
+        const entrada=paisesL.find(([n])=>n===paisPegado);
+        if(entrada){
+          const patron=entrada[1].slice().sort((a,b)=>b.length-a.length)
+            .map(a=>a.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|');
+          ciudadCP=ciudadCP.replace(new RegExp('[.\\s]*\\b(?:'+patron+')\\b.*$','i'),'').trim();
+        }
+      }
       ciudadCP=ciudadCP.replace(/\b(?:españa|spain|espagne|spanien)\b\.?$/i,"").trim();
       ciudadCP=ciudadCP.replace(/[.,]+$/,"").trim();
       // Si el OCR dejó "Oliva (Valencia)", lo anterior ya deja solo "Oliva".
