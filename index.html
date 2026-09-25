@@ -17,15 +17,15 @@
   .cab p{margin:4px 0 0;font-size:.8rem;line-height:1.25;color:#fff}
   /* LECTOR DE CÓDIGO DE BARRAS — solo diseño, sin tocar la lógica del escáner */
   #lector{
-    width:min(320px,100%);
-    height:145px;
+    width:min(380px,96%);
+    height:220px;
     margin:10px auto 0;
     background:#000;
-    border-radius:12px;
+    border-radius:16px;
     overflow:hidden;
     min-height:0;
     position:relative;
-    box-shadow:0 2px 8px rgba(0,0,0,.25);
+    box-shadow:0 4px 16px rgba(0,0,0,.35);
   }
   #lector video{
     width:100%!important;
@@ -35,35 +35,50 @@
   }
   #lector canvas{max-width:100%;}
 
-  /* Marco central tipo lector profesional de barras */
+  /* Recuadro de escaneo tipo lector profesional: esquinas marcadas + fondo
+     oscurecido fuera del recuadro (efecto "visor"), sin tapar la cámara. */
   #lector::before{
     content:"";
     position:absolute;
     z-index:20;
-    left:12%;
-    right:12%;
-    top:29%;
-    height:42%;
-    border:3px solid rgba(255,255,255,.95);
-    border-radius:8px;
+    left:8%;
+    right:8%;
+    top:24%;
+    height:38%;
+    border-radius:14px;
+    border:2px solid rgba(255,255,255,.55);
     box-shadow:
-      0 0 0 2px rgba(170,21,27,.45),
-      0 0 14px rgba(255,255,255,.25);
+      0 0 0 2000px rgba(0,0,0,.5),
+      0 0 18px rgba(255,255,255,.25);
+    background:
+      linear-gradient(#F1BF00,#F1BF00) top left/28px 6px no-repeat,
+      linear-gradient(#F1BF00,#F1BF00) top left/6px 28px no-repeat,
+      linear-gradient(#F1BF00,#F1BF00) top right/28px 6px no-repeat,
+      linear-gradient(#F1BF00,#F1BF00) top right/6px 28px no-repeat,
+      linear-gradient(#F1BF00,#F1BF00) bottom left/28px 6px no-repeat,
+      linear-gradient(#F1BF00,#F1BF00) bottom left/6px 28px no-repeat,
+      linear-gradient(#F1BF00,#F1BF00) bottom right/28px 6px no-repeat,
+      linear-gradient(#F1BF00,#F1BF00) bottom right/6px 28px no-repeat;
     pointer-events:none;
   }
 
-  /* Línea láser central */
+  /* Línea láser que barre el recuadro de arriba abajo, como un lector real */
   #lector::after{
     content:"";
     position:absolute;
     z-index:21;
-    left:12%;
-    right:12%;
-    top:50%;
+    left:10%;
+    right:10%;
+    top:26%;
     height:2px;
     background:#ff2020;
-    box-shadow:0 0 7px 2px rgba(255,40,40,.75);
+    box-shadow:0 0 8px 2px rgba(255,40,40,.8);
     pointer-events:none;
+    animation:lqddLaserSweep 1.8s ease-in-out infinite;
+  }
+  @keyframes lqddLaserSweep{
+    0%,100%{ top:26%; }
+    50%{ top:58%; }
   }
   button{width:100%;padding:12px;margin-top:10px;font-size:1rem;border:0;border-radius:10px;background:#AA151B;color:#F1BF00;font-weight:bold}
   .fila{display:flex;gap:8px;margin-top:10px}
@@ -1858,6 +1873,46 @@ if(verIngredientesBtn){
     }
   }
 
+  // Búsqueda ESTRUCTURADA: cada dato (calle, ciudad, provincia, código
+  // postal, país) se manda en su propio campo, no como una frase suelta.
+  // El callejero compara cada campo por separado en vez de tener que
+  // adivinar qué palabra es la calle y cuál la ciudad, así que es mucho más
+  // preciso que el texto libre — y de paso nos permite validar/detectar la
+  // calle, no solo la ciudad.
+  async function consultarMapaEstructuradoL(componentes,codigoPaisHint){
+    const {calle,ciudad,provincia,codigoPostal,pais}=componentes||{};
+    if(!calle && !ciudad && !codigoPostal) return null;
+    const ac=new AbortController();
+    controladorMapaMundialL=ac;
+    const t=setTimeout(()=>ac.abort(),6000);
+    try{
+      const p=new URLSearchParams({format:"jsonv2",limit:"1",addressdetails:"1","accept-language":"es"});
+      if(calle) p.set("street",calle);
+      if(ciudad) p.set("city",ciudad);
+      if(provincia) p.set("county",provincia);
+      if(codigoPostal) p.set("postalcode",codigoPostal);
+      if(pais) p.set("country",pais);
+      if(codigoPaisHint) p.set("countrycodes",String(codigoPaisHint).toLowerCase());
+      const resp=await fetch("https://nominatim.openstreetmap.org/search?"+p.toString(),{signal:ac.signal});
+      if(!resp.ok) return null;
+      const arr=await resp.json();
+      const it=Array.isArray(arr)?arr[0]:null;
+      if(!it || !it.address) return null;
+      const ad=it.address;
+      return {
+        calle:ad.road||"",
+        ciudad:ad.city||ad.town||ad.village||ad.municipality||"",
+        provincia:ad.province||ad.county||ad.state||"",
+        pais:ad.country||""
+      };
+    }catch(e){
+      return null;
+    }finally{
+      clearTimeout(t);
+      if(controladorMapaMundialL===ac) controladorMapaMundialL=null;
+    }
+  }
+
   // Valida las localidades detectadas por OCR contra un callejero real.
   // Una palabra solo se guarda como ciudad si el mapa la reconoce como
   // city/town/village/municipality o si viene respaldada por un código postal
@@ -1874,10 +1929,31 @@ if(verIngredientesBtn){
     // El país ya declarado por la propia etiqueta manda siempre. Puede venir
     // de un texto explícito ya extraído, o de la marca sanitaria de la UE
     // (una prueba física, no una suposición). El mapa mundial solo se usa
-    // luego para precisar ciudad/provincia DENTRO de ese país.
+    // luego para precisar ciudad/provincia/calle DENTRO de ese país.
     const marcaSanitaria=detectarMarcaSanitariaL(raw);
     const paisDeclarado=datos.pais||(marcaSanitaria&&marcaSanitaria.pais)||"";
     const codigoPaisHint=codigoPorPaisL(paisDeclarado);
+
+    // 0) Intento estructurado primero: mucho más fiable que el texto libre.
+    if(datos.ciudad || datos.direccion || datos.codigoPostal){
+      const geoEstr=await consultarMapaEstructuradoL({
+        calle:datos.direccion,
+        ciudad:datos.ciudad,
+        provincia:datos.provincia,
+        codigoPostal:datos.codigoPostal,
+        pais:paisDeclarado
+      },codigoPaisHint);
+      if(geoEstr && geoEstr.pais && geoEstr.ciudad &&
+         (codigoPaisHint || !datos.ciudad || pareceLaMismaLocalidadL(datos.ciudad,geoEstr.ciudad))){
+        if(geoEstr.calle) datos.direccion=geoEstr.calle;
+        datos.ciudad=geoEstr.ciudad;
+        if(!datos.provincia && geoEstr.provincia) datos.provincia=geoEstr.provincia;
+        if(!paisDeclarado) datos.pais=geoEstr.pais;
+        datos.mapaMundial=(datos.pais||geoEstr.pais)+' ('+geoEstr.ciudad+(geoEstr.provincia?', '+geoEstr.provincia:'')+(geoEstr.calle?' · '+geoEstr.calle:'')+')';
+        return geoEstr;
+      }
+    }
+
 
     // 1) La pista más fiable: código postal + todo lo que aparece en su línea.
     const lineas=texto.split('\n').map(x=>x.trim()).filter(Boolean);
