@@ -718,10 +718,10 @@ async function lqddSupabaseFetch(path, options={}){
   const t=setTimeout(()=>ac.abort(),7000);
   const method=String(options.method||"GET").toUpperCase();
   let url=LQDD_SUPABASE_URL + path;
-  // Las consultas GET de PostgREST pueden quedar en caché en algunos
-  // navegadores/proxies. Para una ficha que acabamos de SOBRESCRIBIR eso es
-  // inaceptable: cada escaneo debe poder ver la revisión más reciente.
-  if(method==="GET") url += (url.includes("?")?"&":"?") + "_lqdd_ts=" + Date.now();
+  // IMPORTANTE: no añadimos parámetros de caché a la URL de PostgREST.
+  // Supabase/PostgREST interpreta cualquier parámetro desconocido como un
+  // filtro y puede responder con PGRST100. cache:no-store + Cache-Control
+  // evitan la caché sin alterar la consulta.
   try{
     return await fetch(url, {
       ...options,
