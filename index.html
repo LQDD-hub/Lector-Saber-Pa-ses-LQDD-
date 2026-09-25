@@ -446,7 +446,7 @@ function hablarResultadoCompleto(info, codigo, paisPrefijo, frase, paisFab, tien
   if(paisPrefijo) partes.push("País según el código: "+paisPrefijo);
   if(info && info.nombre) partes.push("Producto: "+info.nombre);
   if(info && info.marca) partes.push("Marca: "+info.marca);
-   if(info && info.fabricante) partes.push("Empresa/fabricante registrado: "+info.fabricante);
+   if(info && limpiarFabricanteLQDD(info.fabricante)) partes.push("Empresa/fabricante registrado: "+limpiarFabricanteLQDD(info.fabricante));
   if(info && info.denominacion) partes.push("Denominación: "+info.denominacion);
   if(info && info.cantidad) partes.push("Cantidad: "+info.cantidad);
   if(info && info.categoria) partes.push("Categoría: "+info.categoria);
@@ -836,9 +836,30 @@ function lqddEtiquetaSemilla(codigo){
 
 // Guarda la lectura completa de la etiqueta en la base central LQDD.
 // La etiqueta queda asociada al código de barras y no al teléfono.
+// Limpieza única y obligatoria del fabricante. Los restos de OCR como
+// ". ( a»" no son un fabricante y nunca deben entrar ni volver a salir.
+function limpiarFabricanteLQDD(valor){
+  let v=String(valor||"").replace(/\s+/g," ").trim();
+  v=v.replace(/^[\s:;,.|·•»«"'`]+|[\s:;,.|·•»«"'`]+$/g,"").trim();
+  if(!v) return "";
+  const letras=(v.match(/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/g)||[]).length;
+  const utiles=(v.match(/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9]/g)||[]).length;
+  if(letras<3 || (v.length>=4 && utiles/v.length<0.55)) return "";
+  if(/^(?:a|aa|i|l|o|0|u|n|m)$/i.test(v)) return "";
+  if(v.length<12 && !/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]{3,}/.test(v)) return "";
+  return v;
+}
+function limpiarEtiquetaAntesDeGuardarLQDD(etiqueta){
+  const r=Object.assign({},etiqueta||{});
+  r.fabricante=limpiarFabricanteLQDD(r.fabricante);
+  return r;
+}
+
 async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
   const cod=normalizarCodigoProducto(codigo);
   if(!cod || !etiqueta || typeof etiqueta!=="object") throw new Error("Faltan el código o los datos de la etiqueta.");
+
+  etiqueta=limpiarEtiquetaAntesDeGuardarLQDD(etiqueta);
 
   const payload={
     codigo:cod,
@@ -885,9 +906,13 @@ async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
         throw new Error("No se pudo SOBRESCRIBIR la etiqueta en Supabase (HTTP "+r.status+"). "+detalle.slice(0,180));
       }
     }
-    // Supabase confirmó el PATCH con una respuesta 2xx.
-    // No hacemos una lectura inmediata: puede existir latencia de lectura y
-    // eso provocaba falsos errores aunque la escritura hubiese funcionado.
+    // Verificación real: no mostramos “SOBRESCRITA” hasta comprobar que la
+    // lectura central devuelve exactamente la revisión que acabamos de guardar.
+    const ver=await consultarEtiquetaCentralLQDD(cod);
+    const revGuardada=Number(JSON.parse(payload.dato).revision)||0;
+    if(!ver || Number(ver._revisionCentral||0)!==revGuardada){
+      throw new Error("La base aceptó la escritura, pero la lectura posterior no devuelve la nueva revisión. No se marcará como sobrescrita.");
+    }
     return true;
   }
 
@@ -900,8 +925,11 @@ async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
     const detalle=await r.text().catch(()=>"");
     throw new Error("No se pudo guardar la etiqueta en Supabase (HTTP "+r.status+"). "+detalle.slice(0,180));
   }
-  // Supabase confirmó el INSERT con una respuesta 2xx.
-  // No hacemos una segunda lectura inmediata para evitar falsos negativos por latencia.
+  const ver=await consultarEtiquetaCentralLQDD(cod);
+  const revGuardada=Number(JSON.parse(payload.dato).revision)||0;
+  if(!ver || Number(ver._revisionCentral||0)!==revGuardada){
+    throw new Error("La base aceptó la escritura, pero la lectura posterior no devuelve la nueva revisión. No se marcará como guardada.");
+  }
   return true;
 }
 
@@ -916,10 +944,10 @@ async function guardarProductoCentralLQDD(codigo, info){
     tipo_dato:"producto_escaneado",
     dato:JSON.stringify({
       version:2, codigo:cod,
-      nombre:info.nombre||"", marca:info.marca||"", fabricante:info.fabricante||"", cantidad:info.cantidad||"",
+      nombre:info.nombre||"", marca:info.marca||"", fabricante:limpiarFabricanteLQDD(info.fabricante), cantidad:info.cantidad||"",
       categoria:info.categoria||"", fabricacion:info.prod||null, origen:info.ori||"",
       ingredientes:info.ingredients||"", alergenos:info.alergenos||"",
-      etiqueta:info.etiquetaL||null, fuente_lectura:"LQDD Scanner"
+      etiqueta:limpiarEtiquetaAntesDeGuardarLQDD(info.etiquetaL||null), fuente_lectura:"LQDD Scanner"
     }),
     fuente:"LQDD Scanner", estado:"pendiente"
   };
@@ -976,10 +1004,13 @@ async function consultarEtiquetaCentralLQDD(codigo){
         try{
           let dato=row.dato;
           if(typeof dato==="string") dato=JSON.parse(dato);
-          if(dato && dato.etiqueta && typeof dato.etiqueta==="object") candidatas.push({
-            etiqueta:dato.etiqueta, revision:Number(dato.revision)||0,
-            version:Number(dato.version)||0, id:row.id
-          });
+          if(dato && dato.etiqueta && typeof dato.etiqueta==="object"){
+            const et=limpiarEtiquetaAntesDeGuardarLQDD(dato.etiqueta);
+            candidatas.push({
+              etiqueta:et, revision:Number(dato.revision)||0,
+              version:Number(dato.version)||0, id:row.id
+            });
+          }
         }catch(_e){}
       }
       candidatas.sort((a,b)=>(b.revision-a.revision)||(b.version-a.version)||(Number(b.id)||0)-(Number(a.id)||0));
@@ -1197,7 +1228,7 @@ async function mostrar(codigo){
   if(etiquetaGuardada){
     info.etiquetaL=Object.assign({},etiquetaGuardada);
     // Una lectura explícita de la etiqueta tiene prioridad sobre un dato genérico de productor.
-    if(etiquetaGuardada.fabricante) info.fabricante=etiquetaGuardada.fabricante;
+    info.fabricante=limpiarFabricanteLQDD(etiquetaGuardada.fabricante);
 
     // Si ya tenemos una etiqueta leída (propia o de la base global compartida
     // LQDD) y todavía no hay ninguna fabricación reconocida por otras fuentes,
@@ -1348,7 +1379,8 @@ function pintar(silencio, sinGuardar){
   if(info.cantidad) html+="⚖️ <b>Cantidad:</b> "+esc(info.cantidad)+"<br>";
   if(info.categoria) html+="🗂️ <b>Categoría:</b> "+esc(info.categoria)+"<br>";
   if(info.ori) html+="🌍 <b>Origen declarado:</b> "+esc(info.ori)+"<br>";
-  if(info.fabricante) html+="🏢 <b>Fabricante / empresa registrada:</b> "+esc(info.fabricante)+"<br>";
+  const fabricanteLimpio=limpiarFabricanteLQDD(info.fabricante);
+  if(fabricanteLimpio) html+="🏢 <b>Fabricante / empresa registrada:</b> "+esc(fabricanteLimpio)+"<br>";
   if(tieneFabricacion){
     const mismo=norm(paisPrefijo)===norm(paisFab);
     const nivel=info.prod.nivel==="confirmado"?"🟢 CONFIRMADO":"🟡 ASOCIADO";
@@ -1397,7 +1429,10 @@ function pintar(silencio, sinGuardar){
   }
 }
 
-if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
+// No dejamos que una versión antigua del service worker sirva un index.html viejo.
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.getRegistrations().then(rs=>rs.forEach(reg=>reg.unregister())).catch(()=>{});
+}
 const btn = document.getElementById("btn");
 const estadoEscaneo = document.getElementById("estadoEscaneo");
 let scanner=null, activo=false, ultimo="", streamNativo=null, videoNativo=null, rafNativo=0;
@@ -2296,6 +2331,7 @@ if(verIngredientesBtn){
         const aviso=E("datosEtiquetaGuardados");
         if(aviso) aviso.innerHTML="<div style='padding:10px;background:#fff7d6;border:1px solid #e0c45c;border-radius:10px'><b>☁️ Guardando etiqueta en la base de datos LQDD…</b></div>";
         try{
+          r=limpiarEtiquetaAntesDeGuardarLQDD(r);
           await guardarEtiquetaCentralLQDD(codigoActual,r);
           if(secuenciaEtiqueta!==lqddMostrarSeq) return;
 
