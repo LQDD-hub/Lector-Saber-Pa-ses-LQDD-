@@ -1845,11 +1845,11 @@ if(verIngredientesBtn){
   async function validarLocalidadEtiquetaL(datos, raw){
     const texto=limpiarOCR(raw);
 
-    // Si la etiqueta ya aporta país extranjero + código postal + ciudad,
-    // el mapa no puede sustituir esos datos por una coincidencia española.
+    // Si la etiqueta ya da país extranjero + código postal + ciudad, esos datos
+    // se consideran explícitos y no se sustituyen por una coincidencia del mapa.
     if(datos.pais && datos.codigoPostal && datos.ciudad && !/^España$/i.test(String(datos.pais).trim())){
-      datos.mapaMundial=datos.pais+' ('+datos.ciudad+(datos.provincia?', '+datos.provincia:'')+')';
-      return {ciudad:datos.ciudad, provincia:datos.provincia||'', pais:datos.pais, consulta:'dato explícito de etiqueta'};
+      datos.mapaMundial=datos.pais+" ("+datos.ciudad+(datos.provincia?', '+datos.provincia:'')+")";
+      return {ciudad:datos.ciudad,provincia:datos.provincia||'',pais:datos.pais,consulta:'dato explícito de etiqueta'};
     }
 
     const consultas=[];
@@ -1992,30 +1992,17 @@ if(verIngredientesBtn){
       acondicionadoPor:"",origen:"",direccion:"",ciudad:"",provincia:"",
       pais:"",codigoPostal:"",mapaMundial:"",ingredientes:"",alergenos:"",raw};
 
-    // === PROTECCIÓN DE DIRECCIONES EXTRANJERAS ===
-    // País + código postal + ciudad explícitos en la etiqueta tienen prioridad
-    // sobre cualquier coincidencia geográfica generada por OCR.
-    const marcaAlemania=raw.match(/\\b(?:Deutschland|Germany|Alemania|Allemagne)\\b/i);
-    const dirAlemania=raw.match(/\\b(?:D[-\\s]?)?(\\d{5})\\s+([A-ZÄÖÜẞ][A-Za-zÄÖÜäöüß'’.-]*(?:\\s+[A-ZÄÖÜẞ][A-Za-zÄÖÜäöüß'’.-]*)*)\\s*[.,]?\\s*(?:Deutschland|Germany|Alemania|Allemagne)\\b/i);
+    // PRIORIDAD: dirección alemana explícita de la propia etiqueta.
+    // Esto evita que una coincidencia geográfica posterior convierta Bissingen
+    // en una localidad española.
+    const marcaAlemania=raw.match(/\b(?:Deutschland|Germany|Alemania|Allemagne)\b/i);
+    const dirAlemania=raw.match(/\b(?:D[-\s]?)?(\d{5})\s+([A-ZÄÖÜẞ][A-Za-zÄÖÜäöüß'’.-]*)\b[^\n]*(?:Deutschland|Germany|Alemania|Allemagne)\b/i);
     if(marcaAlemania) r.pais="Alemania";
     if(dirAlemania){
       r.codigoPostal=dirAlemania[1];
-      r.ciudad=dirAlemania[2].trim().replace(/[.,]+$/,'');
+      r.ciudad=dirAlemania[2].trim();
       r.pais="Alemania";
-    }
-
-    // === PROTECCIÓN DE DIRECCIONES EXTRANJERAS ===
-    // Si la propia etiqueta contiene un país y un código postal alemán,
-    // esos datos tienen prioridad absoluta sobre cualquier provincia española
-    // que pueda aparecer por un OCR defectuoso o por una búsqueda geográfica.
-    const marcaAlemania=raw.match(/\\b(?:Deutschland|Germany|Alemania|Allemagne)\\b/i);
-    const dirAlemania=raw.match(/\\b(?:D[-\\s]?)?(\\d{5})\\s+([A-ZÄÖÜẞ][A-Za-zÄÖÜäöüß'’.-]*(?:\\s+[A-ZÄÖÜẞ][A-Za-zÄÖÜäöüß'’.-]*)*)\\s*[.,]?\\s*(?:Deutschland|Germany|Alemania|Allemagne)\\b/i);
-    if(marcaAlemania) r.pais="Alemania";
-    if(dirAlemania){
-      r.codigoPostal=dirAlemania[1];
-      r.ciudad=dirAlemania[2].trim().replace(/[.,]+$/,'');
-      r.pais="Alemania";
-      if(!r.origen && /(?:pais de origen|country of origin|product of|made in|manufactured in|fabricad[oa] en)/i.test(raw)) r.origen="Alemania";
+      if(!r.origen) r.origen="Alemania";
     }
 
     r.fabricadoEn=lineaDespues(raw,/(?:(?:fabricad[oa]|hech[oa]|cread[oa]|elaborad[oa])\s+en|manufactured\s+in|made\s+in|produced\s+in|producid[oa]\s+en)\s*(.*)$/i);
@@ -2123,17 +2110,10 @@ if(verIngredientesBtn){
       if(ciudadCP) r.ciudad=ciudadCP;
 
       const prefijo=cp[1].slice(0,2);
-      // Solo usamos el prefijo español para declarar España si la etiqueta
-      // no contiene ya un país extranjero inequívoco.
-      if(typeof PROV!=="undefined" && PROV[prefijo] && !r.pais){
+      if(typeof PROV!=="undefined" && PROV[prefijo]){
         r.provincia=PROV[prefijo];
         r.pais="España";
       }else{
-        const mProv=resto.match(/\\(([^)\\n]+)\\)/);
-        if(!r.provincia) r.provincia=(mProv&&mProv[1]||"").trim();
-        if(!r.pais) r.pais=detectarPaisL(raw);
-      }
-    }else{
         const mProv=resto.match(/\(([^)\n]+)\)/);
         r.provincia=(mProv&&mProv[1]||"").trim();
         if(!r.pais) r.pais=detectarPaisL(raw);
@@ -2201,10 +2181,14 @@ if(verIngredientesBtn){
       r.codigoPostal="18300";
     }
 
-    // Fabricante alemán que aparece como nombre de empresa antes de la dirección.
-    if(!r.fabricante && r.pais==="Alemania"){
-      const mf=raw.match(/(?:^|\\n)\\s*([A-ZÄÖÜ][^\\n]{4,100}\\b(?:GmbH|AG|KG)\\b[^\\n]*)/i);
-      if(mf) r.fabricante=mf[1].trim();
+    // SEGURIDAD FINAL: si la etiqueta contiene una dirección alemana clara,
+    // sus datos mandan sobre cualquier coincidencia española del OCR/mapa.
+    if(marcaAlemania && r.codigoPostal && /^8\d{4}$/.test(String(r.codigoPostal))){
+      r.pais="Alemania";
+      if(!r.origen) r.origen="Alemania";
+      const mCiudadDE=raw.match(/\b8\d{4}\s+([A-ZÄÖÜẞ][A-Za-zÄÖÜäöüß'’.-]*)/);
+      if(mCiudadDE) r.ciudad=mCiudadDE[1].trim();
+      r.provincia="";
     }
 
     // Limpieza final: quita restos de OCR sueltos al final de cada campo de texto
@@ -2560,7 +2544,7 @@ if(verIngredientesBtn){
     }catch(e){
       console.error("LQDD OCR:",e);
       barra.style.width="100%";pct.textContent="Error";
-      E("lqddTextoEtiqueta").innerHTML="<b>⚠️ No se pudo leer correctamente la etiqueta.</b><br><small>Haz una foto frontal, enfocada, con toda la etiqueta visible y buena luz.</small>";
+      E("lqddTextoEtiqueta").innerHTML="<b>⚠️ No se pudo leer correctamente la etiqueta.</b><br><small>Si la cámara no se abre, vuelve a pulsar el botón. Si se abre pero no lee, haz una foto frontal, enfocada, con toda la etiqueta visible y buena luz.</small>";
       res.style.display="block";
       setTimeout(()=>{estado.style.display="none";},700);
     }finally{
@@ -2569,7 +2553,11 @@ if(verIngredientesBtn){
   }
 
 
-  E("lqddBtnEtiqueta").onclick=()=>E("lqddFotoEtiqueta").click();
+  E("lqddBtnEtiqueta").onclick=(ev)=>{
+    ev.preventDefault();
+    const input=E("lqddFotoEtiqueta");
+    if(input) input.click();
+  };
   E("lqddFotoEtiqueta").onchange=ev=>{
     const f=ev.target.files&&ev.target.files[0];
     if(f) leerEtiquetaL(f);
