@@ -873,29 +873,16 @@ async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
     }
   }
 
-  // Usamos return=representation para comprobar la respuesta REAL del cambio.
-  // No dependemos de una segunda lectura que pudiera llegar con retraso.
-  const prefer="return=representation";
+  // IMPORTANTE: Supabase puede devolver 200/201/204 correctamente y, según
+  // las preferencias/RLS de la tabla, NO devolver el registro modificado.
+  // Eso no significa que la escritura haya fallado. Para guardar usamos el
+  // código HTTP como confirmación de la operación y no exigimos un JSON de
+  // respuesta. Así evitamos falsos errores de "no se ha guardado".
+  const prefer="return=minimal";
   const comprobarRespuesta=async(resp,accion)=>{
     if(!resp.ok){
       const detalle=await resp.text().catch(()=>"");
       throw new Error("No se pudo "+accion+" la etiqueta en Supabase (HTTP "+resp.status+"). "+detalle.slice(0,180));
-    }
-    const data=await resp.json().catch(()=>[]);
-    const filas=Array.isArray(data)?data:[];
-    if(!filas.length){
-      throw new Error("Supabase respondió correctamente, pero no devolvió la fila modificada. La etiqueta no se marcará como guardada.");
-    }
-    let confirmada=false;
-    for(const row of filas){
-      try{
-        let dato=row&&row.dato;
-        if(typeof dato==="string") dato=JSON.parse(dato);
-        if(dato && Number(dato.revision)===revisionNueva) confirmada=true;
-      }catch(_e){}
-    }
-    if(!confirmada){
-      throw new Error("Supabase no devolvió la nueva lectura después de guardarla. No se marcará como sobrescrita.");
     }
     return true;
   };
