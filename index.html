@@ -1773,13 +1773,72 @@ if(verIngredientesBtn){
   function cancelarBusquedaMapaMundialL(){
     if(controladorMapaMundialL){ controladorMapaMundialL.abort(); controladorMapaMundialL=null; }
   }
-  async function consultarMapaMundialL(consulta){
+
+  // Mapa código ISO de 2 letras -> nombre de país en español, construido a
+  // partir de la tabla ISO ya usada para el prefijo GS1. Sirve para dos cosas:
+  // 1) traducir el código de país de una marca sanitaria de la UE a un nombre;
+  // 2) restringir la búsqueda en el mapa mundial al país que la propia
+  //    etiqueta ya declaró, para que nunca "se vaya" a otro país por una
+  //    palabra mal leída por el OCR.
+  const ISO_INV_L=(function(){
+    const m={};
+    if(typeof ISO==="object" && ISO){ for(const k in ISO){ if(!m[ISO[k]]) m[ISO[k]]=k; } }
+    return m;
+  })();
+  function paisPorCodigoL(codigo){ return ISO_INV_L[String(codigo||"").toUpperCase()]||""; }
+  function codigoPorPaisL(pais){ return (typeof ISO==="object" && ISO && ISO[pais]) || ""; }
+
+  // Marca de identificación sanitaria de la UE: un óvalo impreso en la
+  // etiqueta con el código ISO del país de la instalación, un número de
+  // registro y las siglas de "Comunidad Europea" (CE/EC/EG/WE/EK según el
+  // idioma). Es una prueba física de dónde está la instalación, mucho más
+  // fiable que adivinar el país a partir de una sola palabra reconocida por
+  // OCR y buscada en un callejero mundial.
+  function detectarMarcaSanitariaL(texto){
+    const t=String(texto||"").toUpperCase();
+    const re=/\b([A-Z]{2})\b[^A-Z0-9\n]{0,20}?\b(\d{2,6})\b[^A-Z0-9\n]{0,10}?\b(CE|EC|EG|WE|EK)\b/g;
+    let m;
+    while((m=re.exec(t))){
+      const pais=paisPorCodigoL(m[1]);
+      if(pais) return {codigo:m[1],pais,numero:m[2],match:m[0].trim()};
+    }
+    return null;
+  }
+
+  // Distancia de edición (Levenshtein), para comprobar si lo que devuelve el
+  // mapa mundial se parece de verdad a lo que decía la etiqueta, o si es una
+  // coincidencia casual con un lugar remoto por un OCR defectuoso.
+  function distanciaL(a,b){
+    a=String(a||"");b=String(b||"");
+    const m=a.length,n=b.length;
+    if(!m) return n; if(!n) return m;
+    const d=Array.from({length:m+1},()=>new Array(n+1).fill(0));
+    for(let i=0;i<=m;i++) d[i][0]=i;
+    for(let j=0;j<=n;j++) d[0][j]=j;
+    for(let i=1;i<=m;i++) for(let j=1;j<=n;j++){
+      const coste=a[i-1]===b[j-1]?0:1;
+      d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+coste);
+    }
+    return d[m][n];
+  }
+  function pareceLaMismaLocalidadL(a,b){
+    a=normL(a).replace(/[^a-z0-9]/g,'');b=normL(b).replace(/[^a-z0-9]/g,'');
+    if(!a||!b) return false;
+    if(a===b||a.includes(b)||b.includes(a)) return true;
+    return distanciaL(a,b)<=Math.max(1,Math.ceil(Math.max(a.length,b.length)*0.35));
+  }
+
+  async function consultarMapaMundialL(consulta,codigoPaisHint){
     if(!consulta) return null;
     const ac=new AbortController();
     controladorMapaMundialL=ac;
     const t=setTimeout(()=>ac.abort(),6000); // límite por consulta individual (no por toda la búsqueda)
     try{
-      const url="https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&addressdetails=1&accept-language=es&q="+encodeURIComponent(consulta);
+      let url="https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&addressdetails=1&accept-language=es&q="+encodeURIComponent(consulta);
+      // Si la etiqueta ya declara un país (por texto o por marca sanitaria),
+      // restringimos la búsqueda a ESE país: así una localidad mal leída por
+      // el OCR nunca puede hacer que el resultado "salte" a otro país.
+      if(codigoPaisHint) url+="&countrycodes="+encodeURIComponent(String(codigoPaisHint).toLowerCase());
       const resp=await fetch(url,{signal:ac.signal});
       if(!resp.ok) return null;
       const arr=await resp.json();
@@ -1812,6 +1871,14 @@ if(verIngredientesBtn){
       if(q && q.length>=3 && !consultas.includes(q)) consultas.push(q);
     };
 
+    // El país ya declarado por la propia etiqueta manda siempre. Puede venir
+    // de un texto explícito ya extraído, o de la marca sanitaria de la UE
+    // (una prueba física, no una suposición). El mapa mundial solo se usa
+    // luego para precisar ciudad/provincia DENTRO de ese país.
+    const marcaSanitaria=detectarMarcaSanitariaL(raw);
+    const paisDeclarado=datos.pais||(marcaSanitaria&&marcaSanitaria.pais)||"";
+    const codigoPaisHint=codigoPorPaisL(paisDeclarado);
+
     // 1) La pista más fiable: código postal + todo lo que aparece en su línea.
     const lineas=texto.split('\n').map(x=>x.trim()).filter(Boolean);
     for(const linea of lineas){
@@ -1843,10 +1910,15 @@ if(verIngredientesBtn){
 
     let mejor=null;
     for(const consulta of consultas){
-      const geo=await consultarMapaMundialL(consulta);
+      const geo=await consultarMapaMundialL(consulta,codigoPaisHint);
       if(!geo || !geo.pais) continue;
       const localidad=geo.ciudad||'';
       if(!localidad) continue;
+      // Sin un país ya conocido de la etiqueta, es el momento de más riesgo:
+      // una palabra mal leída por el OCR puede coincidir por casualidad con
+      // un pueblo remoto de otro país. Exigimos que la localidad devuelta se
+      // parezca de verdad a la ciudad que la etiqueta parecía decir.
+      if(!codigoPaisHint && datos.ciudad && !pareceLaMismaLocalidadL(datos.ciudad,localidad)) continue;
       mejor={
         ciudad:localidad,
         provincia:geo.provincia||'',
@@ -1856,16 +1928,30 @@ if(verIngredientesBtn){
       // El primer resultado respaldado por código postal/dirección es suficiente.
       break;
     }
-    if(!mejor) return null;
 
-    // El mapa valida la localidad, pero no debe sustituir una provincia que la
-    // propia etiqueta ya ha declarado claramente. Ejemplo: OSM puede devolver
-    // "Andalucía" como state y "Granada" como county; para nosotros la
-    // provincia correcta es Granada. La declaración explícita de la etiqueta manda.
+    if(!mejor){
+      // No hubo ninguna coincidencia fiable en el mapa. Si al menos tenemos
+      // la marca sanitaria, usamos ese país (prueba física) en vez de dejar
+      // el dato vacío o, peor, adivinado.
+      if(!datos.pais && marcaSanitaria){
+        datos.pais=marcaSanitaria.pais;
+        datos.mapaMundial=marcaSanitaria.pais+" (marca sanitaria de la UE: "+marcaSanitaria.match+")";
+      }
+      return null;
+    }
+
+    // El mapa valida/precisa la localidad, pero no debe sustituir una
+    // provincia que la propia etiqueta ya ha declarado claramente. Ejemplo:
+    // OSM puede devolver "Andalucía" como state y "Granada" como county; para
+    // nosotros la provincia correcta es Granada. La declaración explícita de
+    // la etiqueta manda, y lo mismo aplica al país: si ya lo conocíamos
+    // (texto de la etiqueta o marca sanitaria), nunca se sustituye por lo que
+    // diga el mapa; el mapa mundial solo puede rellenarlo cuando estaba vacío.
     datos.ciudad=mejor.ciudad;
     if(!datos.provincia && mejor.provincia) datos.provincia=mejor.provincia;
-    datos.pais=mejor.pais;
-    datos.mapaMundial=mejor.pais+' ('+mejor.ciudad+(mejor.provincia?', '+mejor.provincia:'')+')';
+    if(!paisDeclarado) datos.pais=mejor.pais;
+    else if(!datos.pais) datos.pais=paisDeclarado;
+    datos.mapaMundial=(datos.pais||mejor.pais)+' ('+mejor.ciudad+(mejor.provincia?', '+mejor.provincia:'')+')';
     return mejor;
   }
 
