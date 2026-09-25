@@ -834,56 +834,11 @@ function lqddEtiquetaSemilla(codigo){
   return r ? Object.assign({},r) : null;
 }
 
-
-// ==================== LIMPIEZA CENTRAL DE ETIQUETAS LQDD ====================
-// Un OCR nunca debe convertir basura en un dato permanente. Esta capa se aplica
-// tanto al leer Supabase como antes de guardar una nueva lectura, de modo que
-// una etiqueta antigua con texto como ". ( a»" no vuelva a aparecer.
-function limpiarValorEtiquetaLQDD(valor, opciones={}){
-  let v=String(valor==null?"":valor).replace(/\s+/g," ").trim();
-  if(!v) return "";
-  v=v.replace(/^[\s:;,.|·•»«\-–—]+|[\s:;,.|·•»«\-–—]+$/g,"").trim();
-  const letras=(v.match(/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/g)||[]).length;
-  const utiles=(v.match(/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9]/g)||[]).length;
-  // Basura típica de OCR: muy pocos caracteres útiles o demasiados símbolos.
-  if(letras<3 || (v.length>=4 && utiles/v.length<0.45)) return "";
-  if(/[\uFFFD]/.test(v)) return "";
-  if(/^[.\s:;,'"`´’‘()\[\]{}<>+*=/_\\|~^@#$%&!?-]+$/u.test(v)) return "";
-
-  if(opciones.empresa){
-    // Nunca aceptamos como empresa frases que sean claramente instrucciones,
-    // encabezados, restos de OCR o campos que no contienen una entidad útil.
-    if(/^\(?\s*(a|e|o|la|el)\s*[»")'’]?$/i.test(v)) return "";
-    if(/^(fabricad[oa]|manufactured|made|produced|envasad[oa]|packed|packaged)\s*(por|by)?$/i.test(v)) return "";
-    if(v.length<3) return "";
-  }
-  return v;
-}
-
-function normalizarEtiquetaLQDD(etiqueta){
-  if(!etiqueta || typeof etiqueta!=="object") return null;
-  const r=Object.assign({},etiqueta);
-  for(const k of ["fabricadoEn","fabricante","envasadoEn","envasadoPor","importadoPor",
-    "procesado","distribuidoPor","etiquetadoPor","acondicionadoPor","direccion",
-    "ciudad","provincia","pais","codigoPostal","mapaMundial","ingredientes","alergenos"]){
-    r[k]=limpiarValorEtiquetaLQDD(r[k],{empresa:/fabricante|envasadoPor|importadoPor|distribuidoPor|etiquetadoPor|acondicionadoPor|procesado/.test(k)});
-  }
-  // Si el fabricante recuperado no es una empresa mínimamente creíble, se elimina.
-  // Es preferible mostrar "no identificado" que presentar una lectura falsa.
-  if(r.fabricante && !/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]{3,}/.test(r.fabricante)) r.fabricante="";
-  return r;
-}
-
-function fabricanteValidoLQDD(valor){
-  return !!limpiarValorEtiquetaLQDD(valor,{empresa:true});
-}
-
 // Guarda la lectura completa de la etiqueta en la base central LQDD.
 // La etiqueta queda asociada al código de barras y no al teléfono.
 async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
   const cod=normalizarCodigoProducto(codigo);
-  const etiquetaLimpia=normalizarEtiquetaLQDD(etiqueta);
-  if(!cod || !etiquetaLimpia) throw new Error("Faltan el código o los datos válidos de la etiqueta.");
+  if(!cod || !etiqueta || typeof etiqueta!=="object") throw new Error("Faltan el código o los datos de la etiqueta.");
 
   const payload={
     codigo:cod,
@@ -892,7 +847,7 @@ async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
       version:3,
       revision:Date.now(),
       codigo:cod,
-      etiqueta:Object.assign({},etiquetaLimpia),
+      etiqueta:Object.assign({},etiqueta),
       fuente_lectura:"OCR LQDD Scanner"
     }),
     fuente:"LQDD Scanner",
@@ -930,9 +885,9 @@ async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
         throw new Error("No se pudo SOBRESCRIBIR la etiqueta en Supabase (HTTP "+r.status+"). "+detalle.slice(0,180));
       }
     }
-    // IMPORTANTE: un PATCH HTTP correcto significa que Supabase aceptó la escritura.
-    // No hacemos depender el guardado de una lectura inmediata: Supabase puede tardar
-    // unos instantes en devolver la nueva revisión por la lectura posterior.
+    // Supabase confirmó el PATCH con una respuesta 2xx.
+    // No hacemos una lectura inmediata: puede existir latencia de lectura y
+    // eso provocaba falsos errores aunque la escritura hubiese funcionado.
     return true;
   }
 
@@ -945,8 +900,8 @@ async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
     const detalle=await r.text().catch(()=>"");
     throw new Error("No se pudo guardar la etiqueta en Supabase (HTTP "+r.status+"). "+detalle.slice(0,180));
   }
-  // No exigimos una lectura inmediata posterior: una respuesta HTTP 2xx del POST
-  // confirma que Supabase aceptó el registro. La consulta siguiente ya lo recuperará.
+  // Supabase confirmó el INSERT con una respuesta 2xx.
+  // No hacemos una segunda lectura inmediata para evitar falsos negativos por latencia.
   return true;
 }
 
@@ -961,7 +916,7 @@ async function guardarProductoCentralLQDD(codigo, info){
     tipo_dato:"producto_escaneado",
     dato:JSON.stringify({
       version:2, codigo:cod,
-      nombre:info.nombre||"", marca:info.marca||"", fabricante:limpiarValorEtiquetaLQDD(info.fabricante,{empresa:true}), cantidad:info.cantidad||"",
+      nombre:info.nombre||"", marca:info.marca||"", fabricante:info.fabricante||"", cantidad:info.cantidad||"",
       categoria:info.categoria||"", fabricacion:info.prod||null, origen:info.ori||"",
       ingredientes:info.ingredients||"", alergenos:info.alergenos||"",
       etiqueta:info.etiquetaL||null, fuente_lectura:"LQDD Scanner"
@@ -992,51 +947,14 @@ async function guardarProductoCentralLQDD(codigo, info){
 
 // Recupera SIEMPRE primero la etiqueta de la base central.
 // El localStorage solo queda como caché si Supabase no responde.
-
-// Migra y limpia físicamente los registros antiguos del GTIN en Supabase.
-// No basta con ocultar el dato malo: todos los duplicados compatibles se
-// reescriben con la versión saneada para que ningún teléfono vuelva a recuperar
-// ". ( a»" u otra basura histórica.
-async function limpiarRegistrosEtiquetaCentralLQDD(codigo){
-  const cod=normalizarCodigoProducto(codigo);
-  if(!cod) return false;
-  const compatibles=codigosCompatiblesLQDD(cod);
-  const filtro=compatibles.length===1
-    ? "codigo=eq."+encodeURIComponent(compatibles[0])
-    : "codigo=in.("+compatibles.map(encodeURIComponent).join(",")+")";
-  const q="/rest/v1/contributions?select=id,dato,codigo&"+filtro+"&tipo_dato=eq.etiqueta_ocr";
-  try{
-    const r=await lqddSupabaseFetch(q,{cache:"no-store"});
-    if(!r.ok) return false;
-    const rows=await r.json().catch(()=>[]);
-    if(!Array.isArray(rows)||!rows.length) return false;
-    let cambio=false;
-    for(const row of rows){
-      if(!row||row.id==null||!row.dato) continue;
-      try{
-        let dato=typeof row.dato==="string"?JSON.parse(row.dato):row.dato;
-        if(!dato||!dato.etiqueta) continue;
-        const limpia=normalizarEtiquetaLQDD(dato.etiqueta);
-        if(!limpia) continue;
-        const antes=JSON.stringify(dato.etiqueta);
-        const despues=JSON.stringify(limpia);
-        if(antes===despues) continue;
-        const nuevo=Object.assign({},dato,{version:Math.max(Number(dato.version)||0,3),revision:Date.now(),codigo:normalizarCodigoProducto(row.codigo||cod),etiqueta:limpia});
-        const pr=await lqddSupabaseFetch("/rest/v1/contributions?id=eq."+encodeURIComponent(row.id),{
-          method:"PATCH",
-          headers:{"Content-Type":"application/json","Prefer":"return=minimal"},
-          body:JSON.stringify({dato:JSON.stringify(nuevo)})
-        });
-        if(pr.ok) cambio=true;
-      }catch(_e){}
-    }
-    return cambio;
-  }catch(_e){ return false; }
-}
-
 async function consultarEtiquetaCentralLQDD(codigo){
+  // Estado de la consulta: "ok" significa que Supabase respondió correctamente,
+  // aunque no exista todavía una fila. "error" significa que no pudimos consultar.
+  // Esto evita que una caída/transitorio de Supabase haga reaparecer una etiqueta
+  // antigua del localStorage.
+  window.LQDD_CENTRAL_LAST_STATUS="error";
   const cod=normalizarCodigoProducto(codigo);
-  if(!cod) return null;
+  if(!cod){ window.LQDD_CENTRAL_LAST_STATUS="ok"; return null; }
 
   // La base central es la autoridad. Hacemos una consulta sin caché y, si
   // hay un fallo transitorio, un segundo intento corto antes de permitir que
@@ -1058,16 +976,16 @@ async function consultarEtiquetaCentralLQDD(codigo){
         try{
           let dato=row.dato;
           if(typeof dato==="string") dato=JSON.parse(dato);
-          if(dato && dato.etiqueta && typeof dato.etiqueta==="object") {
-            const limpia=normalizarEtiquetaLQDD(dato.etiqueta);
-            if(limpia) candidatas.push({
-            etiqueta:limpia, revision:Number(dato.revision)||0,
+          if(dato && dato.etiqueta && typeof dato.etiqueta==="object") candidatas.push({
+            etiqueta:dato.etiqueta, revision:Number(dato.revision)||0,
             version:Number(dato.version)||0, id:row.id
-            });
-          }
+          });
         }catch(_e){}
       }
       candidatas.sort((a,b)=>(b.revision-a.revision)||(b.version-a.version)||(Number(b.id)||0)-(Number(a.id)||0));
+      // La consulta sí ha respondido: desde este momento la base central es
+      // la autoridad, incluso cuando no haya ninguna fila para ese código.
+      window.LQDD_CENTRAL_LAST_STATUS="ok";
       if(candidatas[0]) return Object.assign({},candidatas[0].etiqueta,{_fuenteCentral:true,_revisionCentral:candidatas[0].revision});
       return null;
     }catch(e){
@@ -1080,7 +998,7 @@ async function consultarEtiquetaCentralLQDD(codigo){
   // No recuperamos aquí el localStorage: así una consulta central fallida no
   // puede resucitar silenciosamente una etiqueta antigua de hace años.
   const semilla=lqddEtiquetaSemilla(cod);
-  if(semilla) return Object.assign({},normalizarEtiquetaLQDD(semilla),{_fuenteSemilla:true});
+  if(semilla) return Object.assign({},semilla,{_fuenteSemilla:true});
   return null;
 }
 
@@ -1172,7 +1090,7 @@ async function buscarProducto(codigo){
   const emb=campo("emb_codes"), embTags=campo("emb_codes_tags"), embOrig=campo("emb_codes_orig");
   const packaging=campo("packaging_text"), customer=campo("customer_service"), producer=campo("producer"), link=campo("link");
   // Empresa/fabricante: priorizamos el dato explícito de LQDD y después el campo producer.
-  const fabricante=limpiarValorEtiquetaLQDD(ps.map(p=>p._lqddInfo&&p._lqddInfo.fabricante).find(has)||producer||"",{empresa:true});
+  const fabricante=ps.map(p=>p._lqddInfo&&p._lqddInfo.fabricante).find(has)||producer||"";
   const panels=campo("knowledge_panels");
   const ingredients=campo("ingredients_text_es")||campo("ingredients_text");
   const alergenosRaw=campo("allergens");
@@ -1239,8 +1157,12 @@ function guardarEtiquetaPorCodigo(c,r){
 
 let actual = null; // {codigo, prefijo, info}
 const $ = id => document.getElementById(id);
+// Evita que una consulta asíncrona de un escaneo anterior termine después
+// y vuelva a pintar/guardar una etiqueta antigua sobre el escaneo más reciente.
+let lqddMostrarSeq=0;
 
 async function mostrar(codigo){
+  const miSeq=++lqddMostrarSeq;
   const gs1Raw=String(codigo||"");
   const gs1=extraerGS1(gs1Raw);
   const codigoProducto=normalizarCodigoProducto(gs1.gtin || codigo);
@@ -1257,21 +1179,25 @@ async function mostrar(codigo){
     buscarProducto(codigoProducto),
     consultarEtiquetaCentralLQDD(codigoProducto).catch(()=>null)
   ]);
-  // Limpieza/migración silenciosa: elimina de Supabase los restos de OCR
-  // antiguos sin retrasar la presentación de la etiqueta al usuario.
-  limpiarRegistrosEtiquetaCentralLQDD(codigoProducto).catch(()=>{});
+
+  // Si entretanto se inició otro escaneo, este resultado ya es viejo y no debe
+  // tocar la pantalla, el historial ni la ficha central.
+  if(miSeq!==lqddMostrarSeq) return;
+
   const info=infoBase||{};
-  let etiquetaGuardada=normalizarEtiquetaLQDD(etiquetaCentral||etiquetaLocal||lqddEtiquetaSemilla(codigoProducto));
+  const centralDisponible=(window.LQDD_CENTRAL_LAST_STATUS==="ok");
+  // PRIORIDAD ABSOLUTA: Supabase -> semilla conocida -> caché local SOLO si
+  // Supabase no pudo consultarse. Así una respuesta antigua del teléfono no
+  // puede sustituir una etiqueta nueva que ya está en la base central.
+  let etiquetaGuardada=etiquetaCentral||lqddEtiquetaSemilla(codigoProducto)||(!centralDisponible?etiquetaLocal:null);
   if(etiquetaCentral) guardarEtiquetaPorCodigo(codigoProducto,etiquetaCentral);
-  else if(!etiquetaGuardada){
-    const semilla=lqddEtiquetaSemilla(codigoProducto);
-    if(semilla){etiquetaGuardada=semilla;guardarEtiquetaPorCodigo(codigoProducto,semilla);sincronizarEtiquetaSemillaLQDD(codigoProducto);}
+  else if(etiquetaGuardada && !centralDisponible){
+    guardarEtiquetaPorCodigo(codigoProducto,etiquetaGuardada);
   }
   if(etiquetaGuardada){
     info.etiquetaL=Object.assign({},etiquetaGuardada);
     // Una lectura explícita de la etiqueta tiene prioridad sobre un dato genérico de productor.
-    if(fabricanteValidoLQDD(etiquetaGuardada.fabricante)) info.fabricante=limpiarValorEtiquetaLQDD(etiquetaGuardada.fabricante,{empresa:true});
-    else if(info.fabricante && !fabricanteValidoLQDD(info.fabricante)) info.fabricante="";
+    if(etiquetaGuardada.fabricante) info.fabricante=etiquetaGuardada.fabricante;
 
     // Si ya tenemos una etiqueta leída (propia o de la base global compartida
     // LQDD) y todavía no hay ninguna fabricación reconocida por otras fuentes,
@@ -1307,8 +1233,10 @@ async function mostrar(codigo){
     if(!info.ingredients && etiquetaGuardada.ingredientes) info.ingredients=etiquetaGuardada.ingredientes;
     if(!info.alergenos && etiquetaGuardada.alergenos) info.alergenos=etiquetaGuardada.alergenos;
   }
+  if(miSeq!==lqddMostrarSeq) return;
   actual={codigo:codigoProducto,prefijo,info,gs1Raw}; window.LQDD_getCodigoActual=()=>actual&&actual.codigo; pintar();
 }
+window.LQDD_getMostrarSeq=()=>lqddMostrarSeq;
 
 
 // ---------- Datos GS1 2D: origen, procesamiento y localización ----------
@@ -1407,7 +1335,6 @@ function pintar(silencio, sinGuardar){
   const {codigo:codigoOriginal,prefijo,info}=actual, codigo=normalizarCodigoProducto(codigoOriginal), cuadro=$("resultado");
   const gs1=pintarGS1(actual.gs1Raw||"");
   const paisPrefijo=prefijo==="España / Andorra"?"España":prefijo;
-  info.fabricante=limpiarValorEtiquetaLQDD(info.fabricante,{empresa:true});
   const paisFab=info.prod?(info.prod.pais==="España / Andorra"?"España":info.prod.pais):null;
   const tieneFabricacion=!!paisFab, desconocido=!paisPrefijo||paisPrefijo.startsWith("Desconocido");
   $("pais").textContent=desconocido?"🌍 País GS1 desconocido":bandera(paisPrefijo)+" "+paisPrefijo;
@@ -2295,15 +2222,11 @@ if(verIngredientesBtn){
       "procesado","distribuidoPor","etiquetadoPor","acondicionadoPor","direccion","ciudad","provincia"]){
       r[k]=limpiarCampoEtiqueta(r[k]);
     }
-    // Segunda barrera: el resultado que se va a mostrar/guardar pasa por la
-    // misma normalización que los datos recuperados desde Supabase.
-    Object.assign(r,normalizarEtiquetaLQDD(r));
 
     return r;
   }
 
   async function renderEtiquetaL(r){
-    r=normalizarEtiquetaLQDD(r)||{};
     const filas=[];
     const add=(label,val,icon)=>{if(val)filas.push("<div style='margin:5px 0'>"+icon+" <b>"+label+":</b> "+escL(val)+"</div>");};
     add("Fabricado en",r.fabricadoEn,"🏭");
@@ -2365,6 +2288,7 @@ if(verIngredientesBtn){
     if(window.renderDatosEtiquetaGuardados) window.renderDatosEtiquetaGuardados(r);
     try{
       const codigoActual = window.LQDD_getCodigoActual ? window.LQDD_getCodigoActual() : null;
+      const secuenciaEtiqueta=window.LQDD_getMostrarSeq ? window.LQDD_getMostrarSeq() : lqddMostrarSeq;
       if(codigoActual){
         // PRIMERO se guarda en Supabase. Solo después marcamos la etiqueta como
         // guardada localmente. Así no damos por guardada una etiqueta que nunca
@@ -2373,6 +2297,7 @@ if(verIngredientesBtn){
         if(aviso) aviso.innerHTML="<div style='padding:10px;background:#fff7d6;border:1px solid #e0c45c;border-radius:10px'><b>☁️ Guardando etiqueta en la base de datos LQDD…</b></div>";
         try{
           await guardarEtiquetaCentralLQDD(codigoActual,r);
+          if(secuenciaEtiqueta!==lqddMostrarSeq) return;
 
           // La nueva lectura pasa a ser inmediatamente la ficha activa, la
           // caché local y la única entrada de ese GTIN en el historial.
