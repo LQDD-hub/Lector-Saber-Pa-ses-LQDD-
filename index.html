@@ -874,53 +874,40 @@ async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
   }
 
   if(ids.length){
-    let actualizadas=0;
     for(const id of ids){
       const r=await lqddSupabaseFetch("/rest/v1/contributions?id=eq."+encodeURIComponent(id),{
         method:"PATCH",
-        // IMPORTANTE: pedimos la fila actualizada en la propia respuesta.
-        // No hacemos un SELECT inmediatamente después: con determinadas
-        // políticas RLS Supabase puede aceptar el PATCH pero ocultar la fila
-        // en una lectura posterior.
-        headers:{"Content-Type":"application/json","Prefer":"return=representation"},
+        headers:{"Content-Type":"application/json","Prefer":"return=minimal"},
         body:JSON.stringify(payload)
       });
       if(!r.ok){
         const detalle=await r.text().catch(()=>"");
         throw new Error("No se pudo SOBRESCRIBIR la etiqueta en Supabase (HTTP "+r.status+"). "+detalle.slice(0,180));
       }
-      actualizadas++;
     }
-
-    // Si Supabase respondió correctamente a todos los PATCH, la escritura
-    // está confirmada. La respuesta de PATCH es la verificación primaria;
-    // no dependemos de una lectura SELECT posterior que pueda estar limitada
-    // por RLS o por una política de lectura distinta.
-    if(actualizadas!==ids.length){
-      throw new Error("No se pudieron actualizar todas las revisiones de la etiqueta.");
+    // Verificación real: no mostramos “SOBRESCRITA” hasta comprobar que la
+    // lectura central devuelve exactamente la revisión que acabamos de guardar.
+    const ver=await consultarEtiquetaCentralLQDD(cod);
+    const revGuardada=Number(JSON.parse(payload.dato).revision)||0;
+    if(!ver || Number(ver._revisionCentral||0)!==revGuardada){
+      throw new Error("La base aceptó la escritura, pero la lectura posterior no devuelve la nueva revisión. No se marcará como sobrescrita.");
     }
     return true;
   }
 
   const r=await lqddSupabaseFetch("/rest/v1/contributions",{
     method:"POST",
-    // return=representation hace que Supabase devuelva la fila recién creada.
-    // Así comprobamos la escritura en la misma operación y evitamos el falso
-    // error producido por consultar inmediatamente después mediante SELECT.
-    headers:{"Content-Type":"application/json","Prefer":"return=representation"},
+    headers:{"Content-Type":"application/json","Prefer":"return=minimal"},
     body:JSON.stringify(payload)
   });
   if(!r.ok){
     const detalle=await r.text().catch(()=>"");
     throw new Error("No se pudo guardar la etiqueta en Supabase (HTTP "+r.status+"). "+detalle.slice(0,180));
   }
-
-  const creada=await r.json().catch(()=>null);
-  if(!Array.isArray(creada) || !creada.length){
-    // Si el servidor devolvió 2xx pero no incluyó representación, la
-    // operación sigue siendo una escritura HTTP aceptada. No hacemos aquí
-    // un SELECT que pueda fallar por RLS y convertirla falsamente en error.
-    console.warn("LQDD: Supabase confirmó la escritura pero no devolvió representación.");
+  const ver=await consultarEtiquetaCentralLQDD(cod);
+  const revGuardada=Number(JSON.parse(payload.dato).revision)||0;
+  if(!ver || Number(ver._revisionCentral||0)!==revGuardada){
+    throw new Error("La base aceptó la escritura, pero la lectura posterior no devuelve la nueva revisión. No se marcará como guardada.");
   }
   return true;
 }
@@ -968,8 +955,13 @@ async function guardarProductoCentralLQDD(codigo, info){
 // Recupera SIEMPRE primero la etiqueta de la base central.
 // El localStorage solo queda como caché si Supabase no responde.
 async function consultarEtiquetaCentralLQDD(codigo){
+  // Estado de la consulta: "ok" significa que Supabase respondió correctamente,
+  // aunque no exista todavía una fila. "error" significa que no pudimos consultar.
+  // Esto evita que una caída/transitorio de Supabase haga reaparecer una etiqueta
+  // antigua del localStorage.
+  window.LQDD_CENTRAL_LAST_STATUS="error";
   const cod=normalizarCodigoProducto(codigo);
-  if(!cod) return null;
+  if(!cod){ window.LQDD_CENTRAL_LAST_STATUS="ok"; return null; }
 
   // La base central es la autoridad. Hacemos una consulta sin caché y, si
   // hay un fallo transitorio, un segundo intento corto antes de permitir que
@@ -998,6 +990,9 @@ async function consultarEtiquetaCentralLQDD(codigo){
         }catch(_e){}
       }
       candidatas.sort((a,b)=>(b.revision-a.revision)||(b.version-a.version)||(Number(b.id)||0)-(Number(a.id)||0));
+      // La consulta sí ha respondido: desde este momento la base central es
+      // la autoridad, incluso cuando no haya ninguna fila para ese código.
+      window.LQDD_CENTRAL_LAST_STATUS="ok";
       if(candidatas[0]) return Object.assign({},candidatas[0].etiqueta,{_fuenteCentral:true,_revisionCentral:candidatas[0].revision});
       return null;
     }catch(e){
@@ -1169,8 +1164,12 @@ function guardarEtiquetaPorCodigo(c,r){
 
 let actual = null; // {codigo, prefijo, info}
 const $ = id => document.getElementById(id);
+// Evita que una consulta asíncrona de un escaneo anterior termine después
+// y vuelva a pintar/guardar una etiqueta antigua sobre el escaneo más reciente.
+let lqddMostrarSeq=0;
 
 async function mostrar(codigo){
+  const miSeq=++lqddMostrarSeq;
   const gs1Raw=String(codigo||"");
   const gs1=extraerGS1(gs1Raw);
   const codigoProducto=normalizarCodigoProducto(gs1.gtin || codigo);
@@ -1187,12 +1186,20 @@ async function mostrar(codigo){
     buscarProducto(codigoProducto),
     consultarEtiquetaCentralLQDD(codigoProducto).catch(()=>null)
   ]);
+
+  // Si entretanto se inició otro escaneo, este resultado ya es viejo y no debe
+  // tocar la pantalla, el historial ni la ficha central.
+  if(miSeq!==lqddMostrarSeq) return;
+
   const info=infoBase||{};
-  let etiquetaGuardada=etiquetaCentral||etiquetaLocal||lqddEtiquetaSemilla(codigoProducto);
+  const centralDisponible=(window.LQDD_CENTRAL_LAST_STATUS==="ok");
+  // PRIORIDAD ABSOLUTA: Supabase -> semilla conocida -> caché local SOLO si
+  // Supabase no pudo consultarse. Así una respuesta antigua del teléfono no
+  // puede sustituir una etiqueta nueva que ya está en la base central.
+  let etiquetaGuardada=etiquetaCentral||lqddEtiquetaSemilla(codigoProducto)||(!centralDisponible?etiquetaLocal:null);
   if(etiquetaCentral) guardarEtiquetaPorCodigo(codigoProducto,etiquetaCentral);
-  else if(!etiquetaGuardada){
-    const semilla=lqddEtiquetaSemilla(codigoProducto);
-    if(semilla){etiquetaGuardada=semilla;guardarEtiquetaPorCodigo(codigoProducto,semilla);sincronizarEtiquetaSemillaLQDD(codigoProducto);}
+  else if(etiquetaGuardada && !centralDisponible){
+    guardarEtiquetaPorCodigo(codigoProducto,etiquetaGuardada);
   }
   if(etiquetaGuardada){
     info.etiquetaL=Object.assign({},etiquetaGuardada);
@@ -1233,8 +1240,10 @@ async function mostrar(codigo){
     if(!info.ingredients && etiquetaGuardada.ingredientes) info.ingredients=etiquetaGuardada.ingredientes;
     if(!info.alergenos && etiquetaGuardada.alergenos) info.alergenos=etiquetaGuardada.alergenos;
   }
+  if(miSeq!==lqddMostrarSeq) return;
   actual={codigo:codigoProducto,prefijo,info,gs1Raw}; window.LQDD_getCodigoActual=()=>actual&&actual.codigo; pintar();
 }
+window.LQDD_getMostrarSeq=()=>lqddMostrarSeq;
 
 
 // ---------- Datos GS1 2D: origen, procesamiento y localización ----------
@@ -2286,6 +2295,7 @@ if(verIngredientesBtn){
     if(window.renderDatosEtiquetaGuardados) window.renderDatosEtiquetaGuardados(r);
     try{
       const codigoActual = window.LQDD_getCodigoActual ? window.LQDD_getCodigoActual() : null;
+      const secuenciaEtiqueta=window.LQDD_getMostrarSeq ? window.LQDD_getMostrarSeq() : lqddMostrarSeq;
       if(codigoActual){
         // PRIMERO se guarda en Supabase. Solo después marcamos la etiqueta como
         // guardada localmente. Así no damos por guardada una etiqueta que nunca
@@ -2294,6 +2304,7 @@ if(verIngredientesBtn){
         if(aviso) aviso.innerHTML="<div style='padding:10px;background:#fff7d6;border:1px solid #e0c45c;border-radius:10px'><b>☁️ Guardando etiqueta en la base de datos LQDD…</b></div>";
         try{
           await guardarEtiquetaCentralLQDD(codigoActual,r);
+          if(secuenciaEtiqueta!==lqddMostrarSeq) return;
 
           // La nueva lectura pasa a ser inmediatamente la ficha activa, la
           // caché local y la única entrada de ese GTIN en el historial.
@@ -2418,26 +2429,10 @@ if(verIngredientesBtn){
             return c.toDataURL("image/jpeg",0.94);
           }
 
-          // LQDD: zoom digital 2× para la lectura de la etiqueta.
-          // Recortamos el centro al 50% y lo ampliamos al mismo tamaño:
-          // el OCR recibe una imagen equivalente a un zoom 2× sin aumentar
-          // innecesariamente el peso de la foto original.
-          const zoom2xCanvas=document.createElement("canvas");
-          zoom2xCanvas.width=w; zoom2xCanvas.height=h;
-          const z=zoom2xCanvas.getContext("2d",{willReadFrequently:true});
-          z.imageSmoothingEnabled=true; z.imageSmoothingQuality="high";
-          const cropW=Math.max(1,Math.round(w/2));
-          const cropH=Math.max(1,Math.round(h/2));
-          const cropX=Math.max(0,Math.round((w-cropW)/2));
-          const cropY=Math.max(0,Math.round((h-cropH)/2));
-          z.drawImage(base,cropX,cropY,cropW,cropH,0,0,w,h);
-
-          // Primera pasada: zoom 2×. Si no es suficientemente buena,
-          // leeremos también la imagen completa como respaldo.
-          const zoom2x=zoom2xCanvas.toDataURL("image/jpeg",0.88);
+          // Primera pasada rápida: color original. Las variantes costosas se
+          // generan sólo si la primera lectura no es suficientemente buena.
           const original=base.toDataURL("image/jpeg",0.88);
           resolve({
-            zoom2x,
             original,
             contraste:()=>dataUrl("contrast"),
             blanco_negro:()=>dataUrl("threshold")
@@ -2510,21 +2505,15 @@ if(verIngredientesBtn){
         if(score>mejor.score) mejor={score,texto,datos,conf:Number(ret&&ret.data&&ret.data.confidence)||0};
         barra.style.width=paso+"%";pct.textContent=paso+"%";
       }
-      // Primera lectura directa con zoom digital 2×.
-      await probarOCR(variantes.zoom2x,"11",50);
+      await probarOCR(variantes.original,"11",55);
 
-      // Si el centro no contiene toda la etiqueta o la lectura no es suficiente,
-      // usamos automáticamente la imagen completa como respaldo.
+      // Sólo hacemos una segunda pasada si la primera no encontró los campos
+      // importantes. Esto ahorra normalmente 1-2 OCR completos por etiqueta.
       if(!(mejor.datos && (mejor.datos.envasadoPor||mejor.datos.fabricante||mejor.datos.ciudad||mejor.datos.direccion) && mejor.conf>=52)){
-        await probarOCR(variantes.original,"11",65);
-      }
-
-      // Sólo hacemos las variantes más costosas si todavía faltan datos.
-      if(!(mejor.datos && (mejor.datos.envasadoPor||mejor.datos.fabricante||mejor.datos.ciudad||mejor.datos.direccion) && mejor.conf>=52)){
-        await probarOCR(variantes.contraste(),"6",80);
+        await probarOCR(variantes.contraste(),"6",78);
       }
       if(!(mejor.datos && (mejor.datos.envasadoPor||mejor.datos.fabricante||mejor.datos.ciudad||mejor.datos.direccion) && mejor.conf>=58)){
-        await probarOCR(variantes.blanco_negro(),"6",90);
+        await probarOCR(variantes.blanco_negro(),"6",88);
       }
 
       let texto=mejor.texto;
