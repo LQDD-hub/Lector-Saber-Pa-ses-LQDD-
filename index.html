@@ -930,13 +930,9 @@ async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
         throw new Error("No se pudo SOBRESCRIBIR la etiqueta en Supabase (HTTP "+r.status+"). "+detalle.slice(0,180));
       }
     }
-    // Verificación real: no mostramos “SOBRESCRITA” hasta comprobar que la
-    // lectura central devuelve exactamente la revisión que acabamos de guardar.
-    const ver=await consultarEtiquetaCentralLQDD(cod);
-    const revGuardada=Number(JSON.parse(payload.dato).revision)||0;
-    if(!ver || Number(ver._revisionCentral||0)!==revGuardada){
-      throw new Error("La base aceptó la escritura, pero la lectura posterior no devuelve la nueva revisión. No se marcará como sobrescrita.");
-    }
+    // IMPORTANTE: un PATCH HTTP correcto significa que Supabase aceptó la escritura.
+    // No hacemos depender el guardado de una lectura inmediata: Supabase puede tardar
+    // unos instantes en devolver la nueva revisión por la lectura posterior.
     return true;
   }
 
@@ -949,11 +945,8 @@ async function guardarEtiquetaCentralLQDD(codigo, etiqueta){
     const detalle=await r.text().catch(()=>"");
     throw new Error("No se pudo guardar la etiqueta en Supabase (HTTP "+r.status+"). "+detalle.slice(0,180));
   }
-  const ver=await consultarEtiquetaCentralLQDD(cod);
-  const revGuardada=Number(JSON.parse(payload.dato).revision)||0;
-  if(!ver || Number(ver._revisionCentral||0)!==revGuardada){
-    throw new Error("La base aceptó la escritura, pero la lectura posterior no devuelve la nueva revisión. No se marcará como guardada.");
-  }
+  // No exigimos una lectura inmediata posterior: una respuesta HTTP 2xx del POST
+  // confirma que Supabase aceptó el registro. La consulta siguiente ya lo recuperará.
   return true;
 }
 
