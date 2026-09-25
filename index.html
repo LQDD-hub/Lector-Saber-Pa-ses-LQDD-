@@ -1844,6 +1844,14 @@ if(verIngredientesBtn){
   // mal leída termine convertida en una ciudad inexistente.
   async function validarLocalidadEtiquetaL(datos, raw){
     const texto=limpiarOCR(raw);
+
+    // Si la etiqueta ya aporta país extranjero + código postal + ciudad,
+    // el mapa no puede sustituir esos datos por una coincidencia española.
+    if(datos.pais && datos.codigoPostal && datos.ciudad && !/^España$/i.test(String(datos.pais).trim())){
+      datos.mapaMundial=datos.pais+' ('+datos.ciudad+(datos.provincia?', '+datos.provincia:'')+')';
+      return {ciudad:datos.ciudad, provincia:datos.provincia||'', pais:datos.pais, consulta:'dato explícito de etiqueta'};
+    }
+
     const consultas=[];
     const anadir=q=>{
       q=String(q||'').replace(/\s+/g,' ').trim();
@@ -1984,6 +1992,32 @@ if(verIngredientesBtn){
       acondicionadoPor:"",origen:"",direccion:"",ciudad:"",provincia:"",
       pais:"",codigoPostal:"",mapaMundial:"",ingredientes:"",alergenos:"",raw};
 
+    // === PROTECCIÓN DE DIRECCIONES EXTRANJERAS ===
+    // País + código postal + ciudad explícitos en la etiqueta tienen prioridad
+    // sobre cualquier coincidencia geográfica generada por OCR.
+    const marcaAlemania=raw.match(/\\b(?:Deutschland|Germany|Alemania|Allemagne)\\b/i);
+    const dirAlemania=raw.match(/\\b(?:D[-\\s]?)?(\\d{5})\\s+([A-ZÄÖÜẞ][A-Za-zÄÖÜäöüß'’.-]*(?:\\s+[A-ZÄÖÜẞ][A-Za-zÄÖÜäöüß'’.-]*)*)\\s*[.,]?\\s*(?:Deutschland|Germany|Alemania|Allemagne)\\b/i);
+    if(marcaAlemania) r.pais="Alemania";
+    if(dirAlemania){
+      r.codigoPostal=dirAlemania[1];
+      r.ciudad=dirAlemania[2].trim().replace(/[.,]+$/,'');
+      r.pais="Alemania";
+    }
+
+    // === PROTECCIÓN DE DIRECCIONES EXTRANJERAS ===
+    // Si la propia etiqueta contiene un país y un código postal alemán,
+    // esos datos tienen prioridad absoluta sobre cualquier provincia española
+    // que pueda aparecer por un OCR defectuoso o por una búsqueda geográfica.
+    const marcaAlemania=raw.match(/\\b(?:Deutschland|Germany|Alemania|Allemagne)\\b/i);
+    const dirAlemania=raw.match(/\\b(?:D[-\\s]?)?(\\d{5})\\s+([A-ZÄÖÜẞ][A-Za-zÄÖÜäöüß'’.-]*(?:\\s+[A-ZÄÖÜẞ][A-Za-zÄÖÜäöüß'’.-]*)*)\\s*[.,]?\\s*(?:Deutschland|Germany|Alemania|Allemagne)\\b/i);
+    if(marcaAlemania) r.pais="Alemania";
+    if(dirAlemania){
+      r.codigoPostal=dirAlemania[1];
+      r.ciudad=dirAlemania[2].trim().replace(/[.,]+$/,'');
+      r.pais="Alemania";
+      if(!r.origen && /(?:pais de origen|country of origin|product of|made in|manufactured in|fabricad[oa] en)/i.test(raw)) r.origen="Alemania";
+    }
+
     r.fabricadoEn=lineaDespues(raw,/(?:(?:fabricad[oa]|hech[oa]|cread[oa]|elaborad[oa])\s+en|manufactured\s+in|made\s+in|produced\s+in|producid[oa]\s+en)\s*(.*)$/i);
     if(!r.fabricadoEn){
       const m=raw.match(/(?:(?:fabricad[oa]|hech[oa]|cread[oa]|elaborad[oa])\s+en|manufactured\s+in|made\s+in|produced\s+in|producid[oa]\s+en)\s*([^\n,.]+)/i);
@@ -2089,10 +2123,17 @@ if(verIngredientesBtn){
       if(ciudadCP) r.ciudad=ciudadCP;
 
       const prefijo=cp[1].slice(0,2);
-      if(typeof PROV!=="undefined" && PROV[prefijo]){
+      // Solo usamos el prefijo español para declarar España si la etiqueta
+      // no contiene ya un país extranjero inequívoco.
+      if(typeof PROV!=="undefined" && PROV[prefijo] && !r.pais){
         r.provincia=PROV[prefijo];
         r.pais="España";
       }else{
+        const mProv=resto.match(/\\(([^)\\n]+)\\)/);
+        if(!r.provincia) r.provincia=(mProv&&mProv[1]||"").trim();
+        if(!r.pais) r.pais=detectarPaisL(raw);
+      }
+    }else{
         const mProv=resto.match(/\(([^)\n]+)\)/);
         r.provincia=(mProv&&mProv[1]||"").trim();
         if(!r.pais) r.pais=detectarPaisL(raw);
@@ -2158,6 +2199,12 @@ if(verIngredientesBtn){
       r.provincia="Granada";
       r.pais="España";
       r.codigoPostal="18300";
+    }
+
+    // Fabricante alemán que aparece como nombre de empresa antes de la dirección.
+    if(!r.fabricante && r.pais==="Alemania"){
+      const mf=raw.match(/(?:^|\\n)\\s*([A-ZÄÖÜ][^\\n]{4,100}\\b(?:GmbH|AG|KG)\\b[^\\n]*)/i);
+      if(mf) r.fabricante=mf[1].trim();
     }
 
     // Limpieza final: quita restos de OCR sueltos al final de cada campo de texto
