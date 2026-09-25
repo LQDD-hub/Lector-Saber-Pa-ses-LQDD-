@@ -1496,15 +1496,41 @@ async function iniciarNativo(){
     streamNativo=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},audio:false});
     videoNativo.srcObject=streamNativo;
     await videoNativo.play();
+
+    // LQDD: lectura deliberadamente más lenta.
+    // El código debe permanecer visible durante 2 segundos antes de aceptarse.
+    let codigoPendiente="";
+    let inicioCodigo=0;
+    const TIEMPO_ESTABILIDAD=2000;
+    let ultimaDeteccion=0;
+    const INTERVALO_LECTURA=350;
+
     const detectarFrame=async()=>{
       if(!activo || !videoNativo)return;
-      try{
-        const codes=await detector.detect(videoNativo);
-        if(codes && codes.length){
-          const txt=codes[0].rawValue||"";
-          if(txt){await parar(); if(navigator.vibrate)navigator.vibrate(100); mostrar(txt); return;}
-        }
-      }catch(e){}
+      const ahora=Date.now();
+      if(ahora-ultimaDeteccion>=INTERVALO_LECTURA){
+        ultimaDeteccion=ahora;
+        try{
+          const codes=await detector.detect(videoNativo);
+          const txt=codes&&codes.length ? (codes[0].rawValue||"") : "";
+          if(txt){
+            if(txt!==codigoPendiente){
+              codigoPendiente=txt;
+              inicioCodigo=Date.now();
+              if(estadoEscaneo)estadoEscaneo.textContent="📷 Código detectado. Manténlo visible 2 segundos...";
+            }else if(Date.now()-inicioCodigo>=TIEMPO_ESTABILIDAD){
+              await parar();
+              if(navigator.vibrate)navigator.vibrate(100);
+              mostrar(txt);
+              return;
+            }
+          }else{
+            codigoPendiente="";
+            inicioCodigo=0;
+            if(estadoEscaneo)estadoEscaneo.textContent="📷 Buscando código...";
+          }
+        }catch(e){}
+      }
       rafNativo=requestAnimationFrame(detectarFrame);
     };
     rafNativo=requestAnimationFrame(detectarFrame);
@@ -1521,8 +1547,8 @@ async function iniciar(){
   btn.textContent="Parar cámara";
   if(estadoEscaneo)estadoEscaneo.textContent="📷 Buscando código...";
 
-  // Primero usamos BarcodeDetector nativo: no descarga ninguna librería y suele
-  // ser más rápido. Solo descargamos html5-qrcode como respaldo si el móvil no lo soporta.
+  // Primero usamos BarcodeDetector nativo. La lectura exige 2 segundos
+  // de estabilidad para evitar que el código se capture demasiado rápido.
   if(await iniciarNativo()) return;
 
   try{
@@ -1533,11 +1559,24 @@ async function iniciar(){
       Html5QrcodeSupportedFormats.UPC_A,
       Html5QrcodeSupportedFormats.UPC_E
     ],experimentalFeatures:{useBarCodeDetectorIfSupported:true},verbose:false});
-    await scanner.start({facingMode:"environment"},{fps:6,qrbox:{width:280,height:90}},async txt=>{
-      if(!activo)return;
-      await parar();
-      if(navigator.vibrate)navigator.vibrate(100);
-      mostrar(txt);
+
+    let codigoPendiente="";
+    let inicioCodigo=0;
+    const TIEMPO_ESTABILIDAD=2000;
+
+    await scanner.start({facingMode:"environment"},{fps:2,qrbox:{width:280,height:90}},async txt=>{
+      if(!activo || !txt)return;
+      if(txt!==codigoPendiente){
+        codigoPendiente=txt;
+        inicioCodigo=Date.now();
+        if(estadoEscaneo)estadoEscaneo.textContent="📷 Código detectado. Manténlo visible 2 segundos...";
+        return;
+      }
+      if(Date.now()-inicioCodigo>=TIEMPO_ESTABILIDAD){
+        await parar();
+        if(navigator.vibrate)navigator.vibrate(100);
+        mostrar(txt);
+      }
     });
   }catch(e){
     activo=false; await pararNativo();
