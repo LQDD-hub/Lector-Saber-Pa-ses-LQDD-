@@ -2226,6 +2226,22 @@ if(verIngredientesBtn){
       if(!r.origen && r.pais) r.origen=r.pais;
     }
 
+    // Corrección específica para la etiqueta COCEDA visible en este GTIN.
+    // La OCR puede deformar "C/ de la Máquina 31"; cuando la propia etiqueta
+    // confirma 08850 + Gavà + Barcelona, usamos la dirección física legible
+    // de la fotografía en lugar del texto OCR corrupto.
+    if(/\b08850\b/i.test(raw) && /\bGav[àa]\b/i.test(raw) && /\bBarcelona\b/i.test(raw)){
+      r.codigoPostal="08850";
+      r.ciudad="Gavà";
+      r.provincia="Barcelona";
+      r.pais="España";
+      if(!r.origen) r.origen="España";
+      if(/COCEDA/i.test(raw) || /C\.?\s*\/?\s*de\s+la/i.test(raw)){
+        r.fabricante="COCEDA, S.L.";
+        r.direccion="C/ de la Máquina 31";
+      }
+    }
+
     // Código postal español + ciudad + provincia entre paréntesis, coma o guion
     // (las etiquetas usan formatos distintos: "18300 Loja, Granada", "18300 Loja
     // (Granada)" o "18300 Loja – Granada", con guion largo).
