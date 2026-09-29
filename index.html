@@ -2021,10 +2021,13 @@ if(verIngredientesBtn){
         pais:paisDeclarado
       },codigoPaisHint);
       if(geoEstr && geoEstr.pais && geoEstr.ciudad && geoEsConfiableL(datos,codigoPaisHint,geoEstr)){
-        if(geoEstr.calle) datos.direccion=geoEstr.calle;
-        datos.ciudad=geoEstr.ciudad;
+        // La etiqueta fotografiada manda. El mapa SOLO valida y completa
+        // campos que estén vacíos; nunca sustituye una ciudad/provincia/calle
+        // explícitamente leída de la etiqueta por otra coincidencia de OSM.
+        if(!datos.direccion && geoEstr.calle) datos.direccion=geoEstr.calle;
+        if(!datos.ciudad) datos.ciudad=geoEstr.ciudad;
         if(!datos.provincia && geoEstr.provincia) datos.provincia=geoEstr.provincia;
-        if(!paisDeclarado) datos.pais=geoEstr.pais;
+        if(!paisDeclarado && !datos.pais) datos.pais=geoEstr.pais;
         datos.mapaMundial=(datos.pais||geoEstr.pais)+' ('+geoEstr.ciudad+(geoEstr.provincia?', '+geoEstr.provincia:'')+(geoEstr.calle?' · '+geoEstr.calle:'')+')';
         return geoEstr;
       }
@@ -2100,9 +2103,11 @@ if(verIngredientesBtn){
     // la etiqueta manda, y lo mismo aplica al país: si ya lo conocíamos
     // (texto de la etiqueta o marca sanitaria), nunca se sustituye por lo que
     // diga el mapa; el mapa mundial solo puede rellenarlo cuando estaba vacío.
-    datos.ciudad=mejor.ciudad;
+    // El mapa sirve para validar/completar, no para sustituir lo que la
+    // etiqueta ya declaró.
+    if(!datos.ciudad) datos.ciudad=mejor.ciudad;
     if(!datos.provincia && mejor.provincia) datos.provincia=mejor.provincia;
-    if(!paisDeclarado) datos.pais=mejor.pais;
+    if(!paisDeclarado && !datos.pais) datos.pais=mejor.pais;
     else if(!datos.pais) datos.pais=paisDeclarado;
     datos.mapaMundial=(datos.pais||mejor.pais)+' ('+mejor.ciudad+(mejor.provincia?', '+mejor.provincia:'')+')';
     return mejor;
@@ -2211,7 +2216,7 @@ if(verIngredientesBtn){
     // Dirección comercial/fabricante en una sola línea, por ejemplo:
     // "COCEDA, S.L., C/ de la Máquina 31. 08850 Gavà (Barcelona), España".
     // Si existe esta estructura, la tratamos como evidencia directa de la etiqueta.
-    const lineaEmpresaDir=raw.match(/([^\n]{2,120}\b(?:S\.?L\.?|S\.?A\.?|S\.?L\.?U\.?|S\.?COOP\.?)\b[^\n]*?\b(\d{5})\s+([^,\n(]+)\s*\(([^)]+)\)\s*,?\s*(España|Spain|Francia|France|Portugal|Italia|Italy|Alemania|Germany)\b)/i);
+    const lineaEmpresaDir=raw.match(/([^\n]{2,160}\b(?:S\.?L\.?|S\.?A\.?|S\.?L\.?U\.?|S\.?COOP\.?)\b[^\n]*?\b(\d{5})\s*[.,-]?\s*([^,\n(]+)\s*\(([^)]+)\)\s*,?\s*(España|Spain|Francia|France|Portugal|Italia|Italy|Alemania|Germany)\b)/i);
     if(lineaEmpresaDir){
       if(!r.fabricante) r.fabricante=lineaEmpresaDir[1].trim().replace(/[,;:]+$/,'');
       if(!r.codigoPostal) r.codigoPostal=lineaEmpresaDir[2];
@@ -2236,6 +2241,7 @@ if(verIngredientesBtn){
       const par=ciudadCP.match(/^([^(\-,–—]+?)\s*\(/);
       if(par) ciudadCP=par[1].trim();
       else ciudadCP=ciudadCP.split(/[,–—-]/)[0].trim();
+      ciudadCP=ciudadCP.replace(/^[.\s:;]+|[.\s:;]+$/g,"").trim();
       // Si detrás del nombre de la ciudad viene el país pegado sin coma ni
       // guion de por medio (p. ej. "Bissingen. Alemania / Alemanha y"), lo
       // cortamos ahí: la ciudad no debe arrastrar el país ni restos de OCR.
